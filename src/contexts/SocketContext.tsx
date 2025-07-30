@@ -28,15 +28,21 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   useEffect(() => {
     if (token) {
-      const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:3001', {
+      console.log('Attempting to connect to socket server...');
+      const newSocket = io('http://localhost:3001', {
         auth: {
           token
         }
       });
 
       newSocket.on('connect', () => {
-        console.log('Connected to server');
+        console.log('Socket connected successfully:', newSocket.id);
         setIsConnected(true);
+      });
+
+      newSocket.on('connect_error', (error) => {
+        console.error('Socket connection error:', error.message);
+        setIsConnected(false);
       });
 
       newSocket.on('disconnect', () => {

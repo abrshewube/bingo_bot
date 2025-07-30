@@ -6,7 +6,9 @@ interface MoneyLevelCardProps {
   playerCount: number;
   maxPlayers: number;
   status: 'waiting' | 'playing' | 'finished';
-  onJoin: () => void;
+  onJoin?: () => void;
+  onStart?: () => void;
+  hasGame: boolean;
 }
 
 const MoneyLevelCard: React.FC<MoneyLevelCardProps> = ({
@@ -14,10 +16,13 @@ const MoneyLevelCard: React.FC<MoneyLevelCardProps> = ({
   playerCount,
   maxPlayers,
   status,
-  onJoin
+  onJoin,
+  onStart,
+  hasGame
 }) => {
   const isActive = status === 'playing';
-  const canJoin = status === 'waiting' && playerCount < maxPlayers;
+  const canJoin = hasGame && status === 'waiting' && playerCount < maxPlayers;
+  const canStart = !hasGame;
 
   return (
     <div className={`money-level-card ${isActive ? 'active' : ''}`}>
@@ -65,16 +70,23 @@ const MoneyLevelCard: React.FC<MoneyLevelCardProps> = ({
       </div>
 
       <button
-        onClick={onJoin}
-        disabled={!canJoin}
+        onClick={e => {
+          if (canStart && onStart) {
+            onStart();
+          } else if (canJoin && onJoin) {
+            onJoin();
+          }
+          e.stopPropagation();
+        }}
+        disabled={(!canStart && !canJoin) || isActive}
         className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 flex items-center justify-center space-x-2 ${
-          canJoin
+          canStart || canJoin
             ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:from-blue-600 hover:to-purple-700 hover:scale-105'
             : 'bg-gray-300 text-gray-500 cursor-not-allowed'
         }`}
       >
         <Play size={16} />
-        <span>{canJoin ? 'Join Game' : isActive ? 'Game Started' : 'Full'}</span>
+        <span>{canStart ? 'Start' : canJoin ? 'Join Game' : isActive ? 'Game Started' : 'Full'}</span>
       </button>
     </div>
   );

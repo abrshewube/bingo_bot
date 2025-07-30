@@ -20,6 +20,7 @@ const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [games, setGames] = useState<GameRoom[]>([]);
   const [loadingGames, setLoadingGames] = useState(true);
+  const [isJoining, setIsJoining] = useState(false);
 
   const moneyLevels = [10, 20, 30, 40, 50, 100];
 
@@ -69,14 +70,86 @@ const HomePage: React.FC = () => {
   };
 
   const handleJoinGame = (moneyLevel: number) => {
+    console.log('Join game button clicked for level:', moneyLevel);
+    
     if (!user?.isRegistered) {
+      console.log('User not registered');
       alert('Please complete registration first!');
       return;
     }
 
-    if (socket) {
-      socket.emit('joinGame', { moneyLevel });
+    if (!socket) {
+      console.error('Socket is not connected');
+      alert('Connection error. Please refresh the page.');
+      return;
     }
+
+    if (isJoining) {
+      console.log('Already attempting to join a game');
+      return;
+    }
+
+    console.log('Attempting to join game with money level:', moneyLevel);
+    setIsJoining(true);
+
+    // Add error handler for the joinGame event
+    const errorHandler = (error: { message: string }) => {
+      console.error('Error joining game:', error);
+      alert(`Error: ${error.message}`);
+      setIsJoining(false);
+    };
+
+    // Add timeout for the join game attempt
+    const timeout = setTimeout(() => {
+      console.error('Join game timeout');
+      socket.off('error', errorHandler);
+      alert('Connection timeout. Please try again.');
+      setIsJoining(false);
+    }, 10000); // 10 second timeout
+
+    // Set up error handler
+    socket.on('error', errorHandler);
+
+    // Emit join game event
+    socket.emit('joinGame', { moneyLevel }, (response: { error?: string }) => {
+      // Clear timeout on response
+      clearTimeout(timeout);
+      
+      if (response?.error) {
+        console.error('Error from server:', response.error);
+        alert(`Error: ${response.error}`);
+        setIsJoining(false);
+        return;
+      }
+      
+      console.log('Successfully joined game, waiting for redirection...');
+      // The navigation will happen when we receive the 'gameJoined' event
+    });
+  };
+
+  // Add this handler for starting a game
+  const handleStartGame = (moneyLevel: number) => {
+    if (!user?.isRegistered) {
+      alert('Please complete registration first!');
+      return;
+    }
+    if (!socket) {
+      alert('Connection error. Please refresh the page.');
+      return;
+    }
+    if (isJoining) return;
+    setIsJoining(true);
+    // Emit startGame event
+    socket.emit('startGame', { moneyLevel }, (response: { error?: string, roomId?: string }) => {
+      setIsJoining(false);
+      if (response?.error) {
+        alert(`Error: ${response.error}`);
+        return;
+      }
+      if (response?.roomId) {
+        navigate(`/game/${response.roomId}`);
+      }
+    });
   };
 
   if (isLoading) {
@@ -165,16 +238,22 @@ const HomePage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {games.map((game) => (
-              <MoneyLevelCard
-                key={game.moneyLevel}
-                moneyLevel={game.moneyLevel}
-                playerCount={game.playerCount}
-                maxPlayers={game.maxPlayers}
-                status={game.status}
-                onJoin={() => handleJoinGame(game.moneyLevel)}
-              />
-            ))}
+            {moneyLevels.map((level) => {
+              const game = games.find((g) => g.moneyLevel === level);
+              const hasGame = !!game && !!game.roomId;
+              return (
+                <MoneyLevelCard
+                  key={level}
+                  moneyLevel={level}
+                  playerCount={game?.playerCount || 0}
+                  maxPlayers={game?.maxPlayers || 100}
+                  status={game?.status || 'waiting'}
+                  hasGame={hasGame}
+                  onStart={hasGame ? undefined : () => handleStartGame(level)}
+                  onJoin={hasGame ? () => handleJoinGame(level) : undefined}
+                />
+              );
+            })}
           </div>
         )}
       </div>

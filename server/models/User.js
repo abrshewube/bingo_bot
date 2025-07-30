@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema({
   },
   walletBalance: {
     type: Number,
-    default: 0
+    default: 20
   },
   gamesPlayed: {
     type: Number,
