@@ -4,7 +4,7 @@
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-gray-300; 
   }
   body {
     @apply bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white min-h-screen;
@@ -16,37 +16,37 @@
   .bingo-card {
     @apply grid grid-cols-5 gap-2 bg-white rounded-xl shadow-2xl p-6 border-4 border-yellow-400;
   }
-  
+
   .bingo-cell {
     @apply aspect-square flex items-center justify-center text-xl font-bold rounded-lg border-2 border-gray-300 transition-all duration-300 cursor-pointer hover:scale-105;
     min-height: 60px;
   }
-  
+
   .bingo-cell.marked {
     @apply bg-gradient-to-br from-blue-500 to-blue-600 text-white border-blue-700 scale-95 shadow-lg;
   }
-  
+
   .bingo-cell.free {
     @apply bg-gradient-to-br from-yellow-400 to-yellow-500 text-gray-800 border-yellow-600 shadow-lg;
   }
-  
+
   .bingo-cell.unmarked {
     @apply bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 hover:from-gray-100 hover:to-gray-200;
   }
-  
+
   .ball-container {
     @apply relative w-24 h-24 mx-auto mb-4;
   }
-  
+
   .ball {
     @apply w-full h-full rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-2xl;
     background: radial-gradient(circle at 30% 30%, #ff6b6b, #ee5a52, #dc4343);
   }
-  
+
   .ball-animation {
     animation: rollBall 2s ease-in-out;
   }
-  
+
   @keyframes rollBall {
     0% {
       transform: translateX(-100px) rotate(0deg);
@@ -61,11 +61,11 @@
       opacity: 1;
     }
   }
-  
+
   .fade-out {
     animation: fadeOut 1s ease-out forwards;
   }
-  
+
   @keyframes fadeOut {
     0% {
       opacity: 1;
@@ -76,15 +76,15 @@
       transform: scale(0.8);
     }
   }
-  
+
   .money-level-card {
     @apply bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 shadow-lg border border-gray-200 transition-all duration-300 hover:shadow-xl hover:scale-105 cursor-pointer;
   }
-  
+
   .money-level-card.active {
     @apply border-green-400 bg-gradient-to-br from-green-50 to-green-100;
   }
-  
+
   .glass-card {
     @apply bg-white/10 backdrop-blur-md rounded-xl border border-white/20 shadow-xl;
   }
