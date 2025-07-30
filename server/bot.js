@@ -32,9 +32,9 @@ class BingoBot {
 
         const welcomeMessage = `🎮 Welcome to Bingo Bot, ${user.first_name}!\n\n` +
           `Get ready for exciting bingo games with real prizes!\n\n` +
-          `💰 Money Levels: 10, 20, 30, 50 Birr\n` +
+          `💰 Money Levels: 10, 20, 30, 40, 50, 100 Birr\n` +
           `🏆 Win up to 80% of the total pot\n` +
-          `👥 Minimum 3 players per game\n\n` +
+          `👥 Minimum 10 players per game\n\n` +
           `Choose an option below:`;
 
         const keyboard = {
@@ -68,12 +68,12 @@ class BingoBot {
         `/help - Show this help message\n\n` +
         `🎯 How to Play:\n` +
         `1. Register with your phone number\n` +
-        `2. Choose a money level (10-50 Birr)\n` +
+        `2. Choose a money level (10-100 Birr)\n` +
         `3. Join a game room\n` +
         `4. Mark numbers on your bingo card\n` +
         `5. First to get BINGO wins the prize!\n\n` +
         `💰 Prize = 80% of total pot\n` +
-        `👥 Minimum 3 players per game`;
+        `👥 Minimum 10 players per game`;
 
       await this.bot.sendMessage(msg.chat.id, helpMessage);
     });

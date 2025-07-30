@@ -26,7 +26,7 @@ import BingoBot from './bot.js'
 import GameService from './services/gameService.js';
 import authRoutes from './routes/auth.js';
 import gameRoutes from './routes/games.js';
-// import { authenticateToken } from './middleware/auth.js';
+import jwt from 'jsonwebtoken';
 import User from './models/User.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -76,7 +76,6 @@ io.use(async (socket, next) => {
       return next(new Error('Authentication error'));
     }
 
-    const jwt = require('jsonwebtoken');
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.userId);
     

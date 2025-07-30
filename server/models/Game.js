@@ -10,7 +10,7 @@ const gameSchema = new mongoose.Schema({
   moneyLevel: {
     type: Number,
     required: true,
-    enum: [10, 20, 30, 50]
+    enum: [10, 20, 30, 40, 50, 100]
   },
   players: [{
     userId: {
@@ -46,11 +46,11 @@ const gameSchema = new mongoose.Schema({
   },
   minPlayers: {
     type: Number,
-    default: 3
+    default: 10
   },
   maxPlayers: {
     type: Number,
-    default: 10
+    default: 100
   },
   calledNumbers: {
     type: [Number],

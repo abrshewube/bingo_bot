@@ -80,13 +80,13 @@ class GameService {
   scheduleGameStart(roomId) {
     const timer = setTimeout(async () => {
       await this.startGame(roomId);
-    }, 10000); // 10 seconds delay before starting
+    }, 180000); // 3 minutes delay before starting
 
     this.gameTimers.set(roomId, timer);
     
     this.io.to(roomId).emit('gameStarting', {
-      message: 'Game starting in 10 seconds...',
-      countdown: 10
+      message: 'Game starting in 3 minutes...',
+      countdown: 180
     });
   }
 
