@@ -1,9 +1,37 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { gameService } from '../services/gameService';
 import { History, Trophy, Calendar, Coins } from 'lucide-react';
+
+interface GameHistoryItem {
+  _id: string;
+  gameId: string;
+  moneyLevel: number;
+  position: number;
+  prizeMoney: number;
+  numbersCalledCount: number;
+  gameDate: string;
+}
 
 const HistoryPage: React.FC = () => {
   const { user } = useAuth();
+  const [gameHistory, setGameHistory] = useState<GameHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadGameHistory();
+  }, []);
+
+  const loadGameHistory = async () => {
+    try {
+      const history = await gameService.getUserGameHistory();
+      setGameHistory(history);
+    } catch (error) {
+      console.error('Failed to load game history:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!user) {
     return (
@@ -15,19 +43,6 @@ const HistoryPage: React.FC = () => {
       </div>
     );
   }
-
-  // Mock game history data (in real app, this would come from API)
-  const gameHistory = user.gamesPlayed > 0 ? [
-    {
-      id: '1',
-      date: new Date().toISOString(),
-      moneyLevel: 50,
-      result: user.gamesWon > 0 ? 'won' : 'lost',
-      prize: user.gamesWon > 0 ? Math.floor(user.totalWinnings / user.gamesWon) : 0,
-      players: 15,
-      numbersCalledCount: 42
-    }
-  ] : [];
 
   return (
     <div className="space-y-6 pb-20">
@@ -88,17 +103,22 @@ const HistoryPage: React.FC = () => {
       <div className="space-y-4">
         <h3 className="text-lg font-bold text-white">Recent Games</h3>
         
-        {gameHistory.length > 0 ? (
+        {loading ? (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-4"></div>
+            <p className="text-white/80">Loading history...</p>
+          </div>
+        ) : gameHistory.length > 0 ? (
           gameHistory.map((game) => (
-            <div key={game.id} className="glass-card p-4 rounded-xl">
+            <div key={game._id} className="glass-card p-4 rounded-xl">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-3">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    game.result === 'won' 
+                    game.position === 1 
                       ? 'bg-green-500' 
                       : 'bg-red-500'
                   }`}>
-                    {game.result === 'won' ? (
+                    {game.position === 1 ? (
                       <Trophy size={20} className="text-white" />
                     ) : (
                       <History size={20} className="text-white" />
@@ -109,30 +129,32 @@ const HistoryPage: React.FC = () => {
                       {game.moneyLevel} Birr Game
                     </p>
                     <p className="text-white/60 text-sm">
-                      {new Date(game.date).toLocaleDateString()}
+                      {new Date(game.gameDate).toLocaleDateString()}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className={`font-bold ${
-                    game.result === 'won' ? 'text-green-400' : 'text-red-400'
+                    game.position === 1 ? 'text-green-400' : 'text-red-400'
                   }`}>
-                    {game.result === 'won' ? `+${game.prize}` : `-${game.moneyLevel}`} Birr
+                    {game.position === 1 ? `+${game.prizeMoney}` : `-${game.moneyLevel}`} Birr
                   </p>
                   <p className="text-white/60 text-sm">
-                    {game.result === 'won' ? 'Won' : 'Lost'}
+                    {game.position === 1 ? 'Won' : `Position ${game.position}`}
                   </p>
                 </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div className="flex items-center space-x-2">
-                  <span className="text-white/60">Players:</span>
-                  <span className="text-white">{game.players}</span>
-                </div>
-                <div className="flex items-center space-x-2">
                   <span className="text-white/60">Numbers Called:</span>
                   <span className="text-white">{game.numbersCalledCount}</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-white/60">Result:</span>
+                  <span className={game.position === 1 ? 'text-green-400' : 'text-red-400'}>
+                    {game.position === 1 ? 'Winner' : 'Lost'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -175,6 +197,18 @@ const HistoryPage: React.FC = () => {
               <div>
                 <p className="text-white font-medium">First Win</p>
                 <p className="text-white/60 text-sm">Won your first bingo game</p>
+              </div>
+            </div>
+          )}
+          
+          {user.gamesPlayed >= 10 && (
+            <div className="flex items-center space-x-3 p-3 bg-white/10 rounded-lg">
+              <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center">
+                <Calendar size={20} className="text-white" />
+              </div>
+              <div>
+                <p className="text-white font-medium">Veteran Player</p>
+                <p className="text-white/60 text-sm">Played 10 or more games</p>
               </div>
             </div>
           )}

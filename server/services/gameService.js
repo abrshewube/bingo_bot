@@ -1,17 +1,13 @@
-// const Game = require('../models/Game');
-// const User = require('../models/User');
-// const GameResult = require('../models/GameResult');
-// const { generateBingoCard, checkBingo, generateRoomId } = require('../utils/bingoUtils');
 import User from '../models/User.js';
 import Game from '../models/Game.js';
 import GameResult from '../models/GameResult.js';
 import { generateBingoCard, checkBingo, generateRoomId } from '../utils/bingoUtils.js';
 
-
 class GameService {
   constructor(io) {
     this.io = io;
     this.gameTimers = new Map();
+    this.numberCallingIntervals = new Map();
   }
 
   async createGame(moneyLevel) {
@@ -33,9 +29,22 @@ class GameService {
       throw new Error('User not registered');
     }
 
-    const game = await Game.findOne({ roomId, status: 'waiting' });
+    // Check if user has enough balance
+    if (user.walletBalance < 0) {
+      throw new Error('Insufficient balance');
+    }
+
+    let game = await Game.findOne({ roomId });
     if (!game) {
-      throw new Error('Game not found or already started');
+      throw new Error('Game not found');
+    }
+
+    if (game.status === 'playing') {
+      throw new Error('Game already started');
+    }
+
+    if (game.status === 'finished') {
+      throw new Error('Game already finished');
     }
 
     if (game.players.length >= game.maxPlayers) {
@@ -46,6 +55,10 @@ class GameService {
     if (existingPlayer) {
       throw new Error('Already joined this game');
     }
+
+    // Deduct entry fee from user's wallet
+    user.walletBalance -= game.moneyLevel;
+    await user.save();
 
     const card = generateBingoCard();
     game.players.push({
@@ -63,36 +76,83 @@ class GameService {
     this.io.to(roomId).emit('playerJoined', {
       playerCount: game.players.length,
       minPlayers: game.minPlayers,
+      maxPlayers: game.maxPlayers,
+      totalPot: game.moneyLevel * game.players.length,
       players: game.players.map(p => ({
         telegramId: p.telegramId,
         firstName: p.firstName
       }))
     });
 
-    // Start game if minimum players reached
+    // Start countdown if minimum players reached and no timer exists
     if (game.players.length >= game.minPlayers && !this.gameTimers.has(roomId)) {
       this.scheduleGameStart(roomId);
+    }
+
+    // Auto-start if max players reached
+    if (game.players.length >= game.maxPlayers) {
+      this.clearGameTimer(roomId);
+      await this.startGame(roomId);
     }
 
     return game;
   }
 
   scheduleGameStart(roomId) {
-    const timer = setTimeout(async () => {
-      await this.startGame(roomId);
-    }, 180000); // 3 minutes delay before starting
-
-    this.gameTimers.set(roomId, timer);
+    let countdown = 180; // 3 minutes
     
-    this.io.to(roomId).emit('gameStarting', {
-      message: 'Game starting in 3 minutes...',
-      countdown: 180
+    // Clear any existing timer
+    this.clearGameTimer(roomId);
+    
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      this.io.to(roomId).emit('gameCountdown', {
+        countdown,
+        message: `Game starting in ${Math.floor(countdown / 60)}:${(countdown % 60).toString().padStart(2, '0')}`
+      });
+
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        this.gameTimers.delete(roomId);
+        this.startGame(roomId);
+      }
+    }, 1000);
+
+    this.gameTimers.set(roomId, countdownInterval);
+    
+    this.io.to(roomId).emit('gameCountdown', {
+      countdown,
+      message: `Game starting in ${Math.floor(countdown / 60)}:${(countdown % 60).toString().padStart(2, '0')}`
     });
+  }
+
+  clearGameTimer(roomId) {
+    if (this.gameTimers.has(roomId)) {
+      clearInterval(this.gameTimers.get(roomId));
+      this.gameTimers.delete(roomId);
+    }
   }
 
   async startGame(roomId) {
     const game = await Game.findOne({ roomId });
     if (!game || game.status !== 'waiting') return;
+
+    if (game.players.length < game.minPlayers) {
+      // Refund players if not enough players
+      for (const player of game.players) {
+        await User.findByIdAndUpdate(player.userId, {
+          $inc: { walletBalance: game.moneyLevel }
+        });
+      }
+      
+      this.io.to(roomId).emit('gameEnded', {
+        message: 'Game cancelled - not enough players. Entry fees refunded.',
+        cancelled: true
+      });
+      
+      await Game.findByIdAndDelete(game._id);
+      return;
+    }
 
     game.status = 'playing';
     game.startedAt = new Date();
@@ -100,7 +160,8 @@ class GameService {
 
     this.io.to(roomId).emit('gameStarted', {
       message: 'Game has started! Good luck!',
-      calledNumbers: []
+      calledNumbers: [],
+      totalPot: game.moneyLevel * game.players.length
     });
 
     // Start calling numbers
@@ -112,6 +173,7 @@ class GameService {
       const game = await Game.findOne({ roomId });
       if (!game || game.status !== 'playing') {
         clearInterval(interval);
+        this.numberCallingIntervals.delete(roomId);
         return;
       }
 
@@ -124,9 +186,10 @@ class GameService {
       }
 
       if (availableNumbers.length === 0) {
-        // All numbers called, end game
-        await this.endGame(roomId, null);
+        // All numbers called, end game with no winner
         clearInterval(interval);
+        this.numberCallingIntervals.delete(roomId);
+        await this.endGame(roomId, []);
         return;
       }
 
@@ -141,13 +204,91 @@ class GameService {
         totalCalled: game.calledNumbers.length
       });
 
-    }, 6000); // Call number every 6 seconds
+      // Check for winners after each number (with smart algorithm)
+      const winners = await this.checkForWinners(game);
+      if (winners.length > 0) {
+        clearInterval(interval);
+        this.numberCallingIntervals.delete(roomId);
+        await this.endGame(roomId, winners);
+      }
+
+    }, 4000); // Call number every 4 seconds
+
+    this.numberCallingIntervals.set(roomId, interval);
+  }
+
+  async checkForWinners(game) {
+    const winners = [];
+    
+    for (const player of game.players) {
+      if (checkBingo(player.card, player.markedNumbers)) {
+        winners.push(player);
+      }
+    }
+
+    // Smart algorithm to ensure at least 1 winner after reasonable number of calls
+    if (winners.length === 0 && game.calledNumbers.length >= 45) {
+      // Force a win for 1-3 random players by marking strategic numbers
+      const numWinners = Math.floor(Math.random() * 3) + 1; // 1-3 winners
+      const shuffledPlayers = [...game.players].sort(() => Math.random() - 0.5);
+      
+      for (let i = 0; i < Math.min(numWinners, shuffledPlayers.length); i++) {
+        const player = shuffledPlayers[i];
+        
+        // Find a winning pattern and mark the missing numbers
+        const missingForWin = this.findMissingNumbersForWin(player.card, player.markedNumbers, game.calledNumbers);
+        if (missingForWin.length > 0) {
+          // Mark the missing numbers to create a win
+          player.markedNumbers.push(...missingForWin);
+          winners.push(player);
+        }
+      }
+      
+      if (winners.length > 0) {
+        await game.save();
+      }
+    }
+
+    return winners;
+  }
+
+  findMissingNumbersForWin(card, markedNumbers, calledNumbers) {
+    const marked = new Set([...markedNumbers, 0]); // Include FREE space
+    const called = new Set(calledNumbers);
+    
+    // Check each possible winning pattern
+    const patterns = [
+      // Rows
+      ...Array.from({ length: 5 }, (_, row) => 
+        Array.from({ length: 5 }, (_, col) => card[col][row])
+      ),
+      // Columns
+      ...Array.from({ length: 5 }, (_, col) => 
+        Array.from({ length: 5 }, (_, row) => card[col][row])
+      ),
+      // Diagonals
+      Array.from({ length: 5 }, (_, i) => card[i][i]),
+      Array.from({ length: 5 }, (_, i) => card[i][4-i])
+    ];
+
+    for (const pattern of patterns) {
+      const missing = pattern.filter(num => !marked.has(num) && called.has(num));
+      if (missing.length <= 2 && missing.length > 0) { // Only need 1-2 more numbers
+        return missing;
+      }
+    }
+
+    return [];
   }
 
   async markNumber(roomId, telegramId, number) {
     const game = await Game.findOne({ roomId, status: 'playing' });
     if (!game) {
       throw new Error('Game not found or not in progress');
+    }
+
+    if (!game.calledNumbers.includes(number)) {
+      throw new Error('Number has not been called yet');
     }
 
     const player = game.players.find(p => p.telegramId === telegramId);
@@ -169,52 +310,73 @@ class GameService {
       if (checkBingo(player.card, player.markedNumbers)) {
         player.hasWon = true;
         await game.save();
-        await this.endGame(roomId, player);
+        
+        // End game immediately when someone wins
+        this.clearGameTimer(roomId);
+        if (this.numberCallingIntervals.has(roomId)) {
+          clearInterval(this.numberCallingIntervals.get(roomId));
+          this.numberCallingIntervals.delete(roomId);
+        }
+        
+        await this.endGame(roomId, [player]);
       }
     }
 
     return game;
   }
 
-  async endGame(roomId, winner) {
+  async endGame(roomId, winners) {
     const game = await Game.findOne({ roomId });
     if (!game) return;
 
     game.status = 'finished';
     game.finishedAt = new Date();
 
-    if (winner) {
-      const prizeMoney = game.moneyLevel * game.players.length * 0.8; // 80% of total pot
-      game.winner = {
-        userId: winner.userId,
-        telegramId: winner.telegramId,
-        firstName: winner.firstName,
-        prizeMoney
+    const totalPot = game.moneyLevel * game.players.length;
+    let winnerData = null;
+
+    if (winners.length > 0) {
+      const prizePerWinner = Math.floor((totalPot * 0.8) / winners.length);
+      
+      winnerData = {
+        winners: winners.map(winner => ({
+          userId: winner.userId,
+          telegramId: winner.telegramId,
+          firstName: winner.firstName,
+          prizeMoney: prizePerWinner
+        })),
+        totalPrize: prizePerWinner * winners.length
       };
 
-      // Update winner's stats
-      await User.findByIdAndUpdate(winner.userId, {
-        $inc: {
-          gamesWon: 1,
-          totalWinnings: prizeMoney,
-          walletBalance: prizeMoney
-        }
-      });
+      game.winner = winnerData.winners[0]; // For backward compatibility
+
+      // Update winners' stats and wallet
+      for (const winner of winners) {
+        await User.findByIdAndUpdate(winner.userId, {
+          $inc: {
+            gamesWon: 1,
+            totalWinnings: prizePerWinner,
+            walletBalance: prizePerWinner
+          }
+        });
+      }
     }
 
     await game.save();
 
-    // Save game results
+    // Save game results for all players
     for (let i = 0; i < game.players.length; i++) {
       const player = game.players[i];
+      const isWinner = winners.some(w => w.telegramId === player.telegramId);
+      
       const result = new GameResult({
         gameId: game._id,
         userId: player.userId,
         telegramId: player.telegramId,
         firstName: player.firstName,
         moneyLevel: game.moneyLevel,
-        position: player.hasWon ? 1 : i + 1,
-        prizeMoney: player.hasWon ? game.winner.prizeMoney : 0,
+        position: isWinner ? 1 : i + 2,
+        prizeMoney: isWinner ? Math.floor((totalPot * 0.8) / winners.length) : 0,
         numbersCalledCount: game.calledNumbers.length,
         gameDate: game.finishedAt
       });
@@ -227,26 +389,53 @@ class GameService {
     }
 
     // Notify all players
+    const message = winners.length > 0 
+      ? winners.length === 1 
+        ? `🎉 ${winners[0].firstName} wins ${Math.floor((totalPot * 0.8))} Birr!`
+        : `🎉 ${winners.length} winners! Each wins ${Math.floor((totalPot * 0.8) / winners.length)} Birr!`
+      : 'Game ended - no winner';
+
     this.io.to(roomId).emit('gameEnded', {
-      winner: game.winner,
-      message: winner ? `🎉 ${winner.firstName} wins!` : 'Game ended - no winner',
+      winners: winnerData?.winners || [],
+      message,
+      totalPrize: winnerData?.totalPrize || 0,
       results: game.players.map(p => ({
         firstName: p.firstName,
-        hasWon: p.hasWon,
+        hasWon: winners.some(w => w.telegramId === p.telegramId),
         markedCount: p.markedNumbers.length
       }))
     });
 
     // Clean up
-    this.gameTimers.delete(roomId);
+    this.clearGameTimer(roomId);
+    if (this.numberCallingIntervals.has(roomId)) {
+      clearInterval(this.numberCallingIntervals.get(roomId));
+      this.numberCallingIntervals.delete(roomId);
+    }
   }
 
   async getAvailableGames() {
-    const games = await Game.find({ status: 'waiting' })
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const games = await Game.find({ 
+      status: { $in: ['waiting', 'playing'] }
+    }).sort({ createdAt: -1 });
     
     return games;
+  }
+
+  async getGamesByMoneyLevel() {
+    const games = await Game.find({ 
+      status: { $in: ['waiting', 'playing'] }
+    }).sort({ createdAt: -1 });
+    
+    const gamesByLevel = {};
+    games.forEach(game => {
+      if (!gamesByLevel[game.moneyLevel]) {
+        gamesByLevel[game.moneyLevel] = [];
+      }
+      gamesByLevel[game.moneyLevel].push(game);
+    });
+    
+    return gamesByLevel;
   }
 
   async getLeaderboard(period = 'all') {
@@ -277,6 +466,14 @@ class GameService {
       { $limit: 10 }
     ]);
 
+    return results;
+  }
+
+  async getUserGameHistory(telegramId) {
+    const results = await GameResult.find({ telegramId })
+      .sort({ gameDate: -1 })
+      .limit(20);
+    
     return results;
   }
 }

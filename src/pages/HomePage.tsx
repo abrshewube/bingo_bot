@@ -6,32 +6,41 @@ import { gameService } from '../services/gameService';
 import MoneyLevelCard from '../components/MoneyLevelCard';
 import { Wallet, Trophy, User } from 'lucide-react';
 
-interface GameRoom {
-  roomId: string;
-  moneyLevel: number;
-  playerCount: number;
-  maxPlayers: number;
-  status: 'waiting' | 'playing' | 'finished';
-}
-
 const HomePage: React.FC = () => {
   const { user, isLoading } = useAuth();
   const { socket } = useSocket();
   const navigate = useNavigate();
-  const [games, setGames] = useState<GameRoom[]>([]);
+  const [gamesByLevel, setGamesByLevel] = useState<{[key: number]: any[]}>({});
   const [loadingGames, setLoadingGames] = useState(true);
-  const [isJoining, setIsJoining] = useState(false);
+  const [countdowns, setCountdowns] = useState<{[key: string]: number}>({});
 
   const moneyLevels = [10, 20, 30, 40, 50, 100];
 
   useEffect(() => {
     loadAvailableGames();
+    const interval = setInterval(loadAvailableGames, 5000); // Refresh every 5 seconds
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (socket) {
+      socket.on('gameCreated', (data) => {
+        navigate(`/game/${data.roomId}`);
+      });
+
       socket.on('gameJoined', (data) => {
         navigate(`/game/${data.roomId}`);
+      });
+
+      socket.on('gameCountdown', (data) => {
+        setCountdowns(prev => ({
+          ...prev,
+          [data.roomId]: data.countdown
+        }));
+      });
+
+      socket.on('playerJoined', (data) => {
+        loadAvailableGames(); // Refresh games when someone joins
       });
 
       socket.on('error', (error) => {
@@ -39,7 +48,10 @@ const HomePage: React.FC = () => {
       });
 
       return () => {
+        socket.off('gameCreated');
         socket.off('gameJoined');
+        socket.off('gameCountdown');
+        socket.off('playerJoined');
         socket.off('error');
       };
     }
@@ -47,21 +59,8 @@ const HomePage: React.FC = () => {
 
   const loadAvailableGames = async () => {
     try {
-      const availableGames = await gameService.getAvailableGames();
-      
-      // Create game rooms for each money level
-      const gameRooms = moneyLevels.map(level => {
-        const existingGame = availableGames.find((g: any) => g.moneyLevel === level);
-        return {
-          roomId: existingGame?.roomId || '',
-          moneyLevel: level,
-          playerCount: existingGame?.playerCount || 0,
-          maxPlayers: 100,
-          status: existingGame?.status || 'waiting'
-        };
-      });
-
-      setGames(gameRooms);
+      const games = await gameService.getAvailableGames();
+      setGamesByLevel(games);
     } catch (error) {
       console.error('Failed to load games:', error);
     } finally {
@@ -69,87 +68,37 @@ const HomePage: React.FC = () => {
     }
   };
 
-  const handleJoinGame = (moneyLevel: number) => {
-    console.log('Join game button clicked for level:', moneyLevel);
-    
+  const handleCreateGame = (moneyLevel: number) => {
     if (!user?.isRegistered) {
-      console.log('User not registered');
       alert('Please complete registration first!');
       return;
     }
 
+    if (user.walletBalance < moneyLevel) {
+      alert(`Insufficient balance! You need ${moneyLevel} Birr to play.`);
+      return;
+    }
+
     if (!socket) {
-      console.error('Socket is not connected');
       alert('Connection error. Please refresh the page.');
       return;
     }
 
-    if (isJoining) {
-      console.log('Already attempting to join a game');
-      return;
-    }
-
-    console.log('Attempting to join game with money level:', moneyLevel);
-    setIsJoining(true);
-
-    // Add error handler for the joinGame event
-    const errorHandler = (error: { message: string }) => {
-      console.error('Error joining game:', error);
-      alert(`Error: ${error.message}`);
-      setIsJoining(false);
-    };
-
-    // Add timeout for the join game attempt
-    const timeout = setTimeout(() => {
-      console.error('Join game timeout');
-      socket.off('error', errorHandler);
-      alert('Connection timeout. Please try again.');
-      setIsJoining(false);
-    }, 10000); // 10 second timeout
-
-    // Set up error handler
-    socket.on('error', errorHandler);
-
-    // Emit join game event
-    socket.emit('joinGame', { moneyLevel }, (response: { error?: string }) => {
-      // Clear timeout on response
-      clearTimeout(timeout);
-      
-      if (response?.error) {
-        console.error('Error from server:', response.error);
-        alert(`Error: ${response.error}`);
-        setIsJoining(false);
-        return;
-      }
-      
-      console.log('Successfully joined game, waiting for redirection...');
-      // The navigation will happen when we receive the 'gameJoined' event
-    });
+    socket.emit('createGame', { moneyLevel });
   };
 
-  // Add this handler for starting a game
-  const handleStartGame = (moneyLevel: number) => {
+  const handleJoinGame = (roomId: string) => {
     if (!user?.isRegistered) {
       alert('Please complete registration first!');
       return;
     }
+
     if (!socket) {
       alert('Connection error. Please refresh the page.');
       return;
     }
-    if (isJoining) return;
-    setIsJoining(true);
-    // Emit startGame event
-    socket.emit('startGame', { moneyLevel }, (response: { error?: string, roomId?: string }) => {
-      setIsJoining(false);
-      if (response?.error) {
-        alert(`Error: ${response.error}`);
-        return;
-      }
-      if (response?.roomId) {
-        navigate(`/game/${response.roomId}`);
-      }
-    });
+
+    socket.emit('joinGame', { roomId });
   };
 
   if (isLoading) {
@@ -228,6 +177,21 @@ const HomePage: React.FC = () => {
         </div>
       )}
 
+      {/* Low Balance Warning */}
+      {user.walletBalance < 10 && (
+        <div className="glass-card p-4 rounded-xl border-red-400/50">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-red-400 rounded-full animate-pulse"></div>
+            <div>
+              <p className="text-white font-medium">Low Balance</p>
+              <p className="text-white/70 text-sm">
+                You need at least 10 Birr to play. Win games to increase your balance!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Game Levels */}
       <div>
         <h2 className="text-xl font-bold text-white mb-4">Available Games</h2>
@@ -239,18 +203,18 @@ const HomePage: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {moneyLevels.map((level) => {
-              const game = games.find((g) => g.moneyLevel === level);
-              const hasGame = !!game && !!game.roomId;
+              const games = gamesByLevel[level] || [];
+              const waitingGame = games.find(g => g.status === 'waiting');
+              const countdown = waitingGame ? countdowns[waitingGame.roomId] : undefined;
+              
               return (
                 <MoneyLevelCard
                   key={level}
                   moneyLevel={level}
-                  playerCount={game?.playerCount || 0}
-                  maxPlayers={game?.maxPlayers || 100}
-                  status={game?.status || 'waiting'}
-                  hasGame={hasGame}
-                  onStart={hasGame ? undefined : () => handleStartGame(level)}
-                  onJoin={hasGame ? () => handleJoinGame(level) : undefined}
+                  games={games}
+                  countdown={countdown}
+                  onCreateGame={() => handleCreateGame(level)}
+                  onJoinGame={handleJoinGame}
                 />
               );
             })}
@@ -266,7 +230,8 @@ const HomePage: React.FC = () => {
           <p>• Game starts automatically after 3 minutes or when full</p>
           <p>• Mark numbers on your card as they're called</p>
           <p>• Win with: Horizontal, Vertical, Diagonal, or Four Corners</p>
-          <p>• Winner gets 80% of the total prize pool</p>
+          <p>• Winners share 80% of the total prize pool</p>
+          <p>• Smart algorithm ensures at least 1 winner per game</p>
         </div>
       </div>
     </div>

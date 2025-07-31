@@ -21,8 +21,18 @@ export const gameService = {
     return response.data;
   },
 
+  async createGame(moneyLevel: number) {
+    const response = await api.post('/games/create', { moneyLevel });
+    return response.data;
+  },
+
   async getGameDetails(roomId: string) {
     const response = await api.get(`/games/${roomId}`);
+    return response.data;
+  },
+
+  async getUserGameHistory() {
+    const response = await api.get('/games/history/user');
     return response.data;
   },
 

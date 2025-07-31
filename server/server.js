@@ -96,8 +96,8 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.firstName} (${socket.telegramId})`);
 
-  // Join game room
-  socket.on('joinGame', async (data) => {
+  // Create new game
+  socket.on('createGame', async (data) => {
     try {
       const { moneyLevel } = data;
       
@@ -108,22 +108,41 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Find available game or create new one
-      let game = await gameService.getAvailableGames();
-      game = game.find(g => g.moneyLevel === moneyLevel);
+      // Create new game
+      const game = await gameService.createGame(moneyLevel);
+      socket.join(game.roomId);
+      socket.currentRoom = game.roomId;
+
+      socket.emit('gameCreated', {
+        roomId: game.roomId,
+        moneyLevel: game.moneyLevel
+      });
+
+    } catch (error) {
+      console.error('Create game error:', error);
+      socket.emit('error', { message: error.message });
+    }
+  });
+
+  // Join existing game
+  socket.on('joinGame', async (data) => {
+    try {
+      const { roomId } = data;
       
-      if (!game) {
-        game = await gameService.createGame(moneyLevel);
+      // Check if user is registered
+      const user = await User.findOne({ telegramId: socket.telegramId });
+      if (!user || !user.isRegistered) {
+        socket.emit('error', { message: 'Please complete registration first' });
+        return;
       }
 
       // Join the game
-      await gameService.joinGame(game.roomId, socket.telegramId);
+      await gameService.joinGame(roomId, socket.telegramId);
       socket.join(game.roomId);
       socket.currentRoom = game.roomId;
 
       socket.emit('gameJoined', {
-        roomId: game.roomId,
-        moneyLevel: game.moneyLevel
+        roomId: roomId
       });
 
     } catch (error) {
@@ -132,12 +151,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Join specific room
+  // Join room for spectating or rejoining
   socket.on('joinRoom', async (data) => {
     try {
       const { roomId } = data;
       
-      await gameService.joinGame(roomId, socket.telegramId);
       socket.join(roomId);
       socket.currentRoom = roomId;
 
