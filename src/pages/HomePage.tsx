@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { gameService } from '../services/gameService';
 import MoneyLevelCard from '../components/MoneyLevelCard';
-import { Wallet, Trophy, User } from 'lucide-react';
+import { Wallet, Trophy, User, AlertCircle } from 'lucide-react';
 
 interface GameRoom {
   roomId: string;
@@ -21,8 +21,14 @@ const HomePage: React.FC = () => {
   const [games, setGames] = useState<GameRoom[]>([]);
   const [loadingGames, setLoadingGames] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const moneyLevels = [10, 20, 30, 40, 50, 100];
+
+  const addLog = (message: string) => {
+    setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev.slice(0, 9)]);
+  };
 
   useEffect(() => {
     loadAvailableGames();
@@ -30,26 +36,38 @@ const HomePage: React.FC = () => {
 
   useEffect(() => {
     if (socket) {
+      addLog('Socket connected, setting up listeners');
+
       socket.on('gameJoined', (data) => {
+        addLog(`Game joined successfully, redirecting to room ${data.roomId}`);
         navigate(`/game/${data.roomId}`);
       });
 
       socket.on('error', (error) => {
-        alert(error.message);
+        addLog(`Socket error: ${error.message}`);
+        setError(error.message);
+      });
+
+      socket.on('gameListUpdated', () => {
+        addLog('Game list updated, reloading available games');
+        loadAvailableGames();
       });
 
       return () => {
+        addLog('Cleaning up socket listeners');
         socket.off('gameJoined');
         socket.off('error');
+        socket.off('gameListUpdated');
       };
     }
   }, [socket, navigate]);
 
   const loadAvailableGames = async () => {
     try {
+      addLog('Loading available games...');
+      setLoadingGames(true);
       const availableGames = await gameService.getAvailableGames();
       
-      // Create game rooms for each money level
       const gameRooms = moneyLevels.map(level => {
         const existingGame = availableGames.find((g: any) => g.moneyLevel === level);
         return {
@@ -60,96 +78,142 @@ const HomePage: React.FC = () => {
           status: existingGame?.status || 'waiting'
         };
       });
-
+      
       setGames(gameRooms);
+      addLog(`Successfully loaded ${availableGames.length} active games`);
     } catch (error) {
-      console.error('Failed to load games:', error);
+      const errMsg = error instanceof Error ? error.message : 'Failed to load games';
+      addLog(`Error loading games: ${errMsg}`);
+      setError(errMsg);
     } finally {
       setLoadingGames(false);
     }
   };
 
   const handleJoinGame = (moneyLevel: number) => {
-    console.log('Join game button clicked for level:', moneyLevel);
+    addLog(`Attempting to join game with money level ${moneyLevel}`);
     
     if (!user?.isRegistered) {
-      console.log('User not registered');
-      alert('Please complete registration first!');
+      const msg = 'Please complete registration first!';
+      addLog(msg);
+      setError(msg);
       return;
     }
 
     if (!socket) {
-      console.error('Socket is not connected');
-      alert('Connection error. Please refresh the page.');
+      const msg = 'Connection error. Please refresh the page.';
+      addLog(msg);
+      setError(msg);
       return;
     }
 
     if (isJoining) {
-      console.log('Already attempting to join a game');
+      addLog('Already attempting to join a game');
       return;
     }
 
-    console.log('Attempting to join game with money level:', moneyLevel);
     setIsJoining(true);
+    setError(null);
 
-    // Add error handler for the joinGame event
     const errorHandler = (error: { message: string }) => {
-      console.error('Error joining game:', error);
-      alert(`Error: ${error.message}`);
+      addLog(`Join game error: ${error.message}`);
+      setError(error.message);
       setIsJoining(false);
     };
 
-    // Add timeout for the join game attempt
     const timeout = setTimeout(() => {
-      console.error('Join game timeout');
+      const msg = 'Join game timeout - server not responding';
+      addLog(msg);
+      setError(msg);
       socket.off('error', errorHandler);
-      alert('Connection timeout. Please try again.');
       setIsJoining(false);
-    }, 10000); // 10 second timeout
+    }, 10000);
 
-    // Set up error handler
     socket.on('error', errorHandler);
 
-    // Emit join game event
     socket.emit('joinGame', { moneyLevel }, (response: { error?: string }) => {
-      // Clear timeout on response
       clearTimeout(timeout);
       
       if (response?.error) {
-        console.error('Error from server:', response.error);
-        alert(`Error: ${response.error}`);
+        addLog(`Server error: ${response.error}`);
+        setError(response.error);
         setIsJoining(false);
         return;
       }
       
-      console.log('Successfully joined game, waiting for redirection...');
-      // The navigation will happen when we receive the 'gameJoined' event
+      addLog('Join game request sent successfully, waiting for confirmation...');
     });
   };
 
-  // Add this handler for starting a game
-  const handleStartGame = (moneyLevel: number) => {
+  const handleStartGame = async (moneyLevel: number) => {
+    addLog(`Attempting to start new game with level ${moneyLevel}`);
+    
     if (!user?.isRegistered) {
-      alert('Please complete registration first!');
+      const msg = 'Please complete registration first!';
+      addLog(msg);
+      setError(msg);
       return;
     }
+
     if (!socket) {
-      alert('Connection error. Please refresh the page.');
+      const msg = 'Connection error. Please refresh the page.';
+      addLog(msg);
+      setError(msg);
       return;
     }
-    if (isJoining) return;
+
+    if (isJoining) {
+      addLog('Already attempting to start a game');
+      return;
+    }
+
     setIsJoining(true);
-    // Emit startGame event
-    socket.emit('startGame', { moneyLevel }, (response: { error?: string, roomId?: string }) => {
-      setIsJoining(false);
-      if (response?.error) {
-        alert(`Error: ${response.error}`);
+    setError(null);
+
+    try {
+      addLog('Checking wallet balance...');
+      
+      // Check if user has enough balance
+      if (user.walletBalance < moneyLevel) {
+        const msg = `You need at least ${moneyLevel} Birr to start this game`;
+        addLog(msg);
+        setError(msg);
+        setIsJoining(false);
         return;
       }
-      if (response?.roomId) {
-        navigate(`/game/${response.roomId}`);
-      }
-    });
+
+      addLog('Emitting startGame event...');
+      
+      socket.emit('startGame', { moneyLevel }, (response: { error?: string, roomId?: string }) => {
+        setIsJoining(false);
+        
+        if (response?.error) {
+          addLog(`Start game error: ${response.error}`);
+          setError(response.error);
+          return;
+        }
+
+        if (response?.roomId) {
+          addLog(`Game started successfully, redirecting to room ${response.roomId}`);
+          navigate(`/game/${response.roomId}`);
+        }
+      });
+
+      // Add timeout for start game
+      const timeout = setTimeout(() => {
+        const msg = 'Start game timeout - server not responding';
+        addLog(msg);
+        setError(msg);
+        setIsJoining(false);
+      }, 10000);
+
+      return () => clearTimeout(timeout);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to start game';
+      addLog(`Error: ${errMsg}`);
+      setError(errMsg);
+      setIsJoining(false);
+    }
   };
 
   if (isLoading) {
@@ -193,6 +257,16 @@ const HomePage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="glass-card p-4 rounded-xl bg-red-500/20 border-red-500/50">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="text-red-400" size={20} />
+            <p className="text-white">{error}</p>
+          </div>
+        </div>
+      )}
 
       {/* User Stats */}
       <div className="grid grid-cols-3 gap-4">
@@ -249,6 +323,7 @@ const HomePage: React.FC = () => {
                   maxPlayers={game?.maxPlayers || 100}
                   status={game?.status || 'waiting'}
                   hasGame={hasGame}
+                  // isJoining={isJoining}
                   onStart={hasGame ? undefined : () => handleStartGame(level)}
                   onJoin={hasGame ? () => handleJoinGame(level) : undefined}
                 />
@@ -256,6 +331,20 @@ const HomePage: React.FC = () => {
             })}
           </div>
         )}
+      </div>
+
+      {/* Debug Logs */}
+      <div className="glass-card p-4 rounded-xl">
+        <h3 className="text-lg font-bold text-white mb-2">Debug Logs</h3>
+        <div className="max-h-40 overflow-y-auto text-xs space-y-1">
+          {logs.length > 0 ? (
+            logs.map((log, index) => (
+              <p key={index} className="text-white/70 font-mono">{log}</p>
+            ))
+          ) : (
+            <p className="text-white/50">No logs yet</p>
+          )}
+        </div>
       </div>
 
       {/* Game Rules */}
