@@ -102,17 +102,21 @@ const HomePage: React.FC = () => {
   };
 
   const handleJoinGame = (roomId: string) => {
+    const game = Object.values(gamesByLevel).flat().find(g => g.roomId === roomId);
+    const moneyLevel = game?.moneyLevel || 10;
+    
     if (!user?.isRegistered) {
       alert('Please complete registration first!');
       return;
     }
 
-    if (!socket) {
-      alert('Connection error. Please refresh the page.');
+    if (user.walletBalance < moneyLevel) {
+      alert(`Insufficient balance! You need ${moneyLevel} Birr to play.`);
       return;
     }
 
-    socket.emit('joinGame', { roomId });
+    // Navigate to game page with money level
+    navigate(`/game/${roomId}`, { state: { moneyLevel } });
   };
 
   if (isLoading) {

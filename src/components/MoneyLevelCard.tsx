@@ -93,6 +93,18 @@ const MoneyLevelCard: React.FC<MoneyLevelCardProps> = ({
           </div>
         )}
 
+        {hasPlayingGame && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Timer size={16} className="text-green-500" />
+              <span className="text-sm text-gray-600">Game Time</span>
+            </div>
+            <span className="font-medium text-green-600">
+              10:00
+            </span>
+          </div>
+        )}
+
       </div>
 
       <div className="w-full bg-gray-200 rounded-full h-2 mb-4">

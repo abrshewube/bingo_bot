@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
 import { gameService } from '../services/gameService';
 import BingoCard from '../components/BingoCard';
-import CartelaSelector from '../components/CartelaSelector';
 import BallDisplay from '../components/BallDisplay';
-import { ArrowLeft, Users, Clock, Trophy, AlertTriangle, LogOut, Eye, Check } from 'lucide-react';
+import CartelaSelector from '../components/CartelaSelector';
+import ExitConfirmationModal from '../components/ExitConfirmationModal';
+import { ArrowLeft, Users, Clock, Trophy } from 'lucide-react';
 
 interface GameData {
   roomId: string;
@@ -19,92 +20,159 @@ interface GameData {
   currentNumber: number | null;
   userCard: number[][] | null;
   userMarkedNumbers: number[];
-  userCartelaNumber?: number;
-  userHasJoined?: boolean;
   winner: any;
   winners?: any[];
   players: any[];
   totalPot: number;
-  gameDuration?: any;
+  takenCartelas?: number[];
 }
 
 const GamePage: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
-  const { socket, isConnected } = useSocket();
+  const location = useLocation();
+  const { socket } = useSocket();
   const { user } = useAuth();
   const [gameData, setGameData] = useState<GameData | null>(null);
   const [loading, setLoading] = useState(true);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [currentBallNumber, setCurrentBallNumber] = useState<number | null>(null);
-  const [showCartelaSelector, setShowCartelaSelector] = useState(false);
-  const [showCartelaPreview, setShowCartelaPreview] = useState(false);
+  const [showCartelaSelector, setShowCartelaSelector] = useState(true);
   const [selectedCartela, setSelectedCartela] = useState<number | null>(null);
-  const [previewCard, setPreviewCard] = useState<number[][] | null>(null);
+  const [userCard, setUserCard] = useState<number[][] | null>(null);
+  const [isJoining, setIsJoining] = useState(false);
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [gameStartTime, setGameStartTime] = useState<Date | null>(null);
+  const [gameTimeLeft, setGameTimeLeft] = useState<number | null>(null);
   const [takenCartelas, setTakenCartelas] = useState<number[]>([]);
-  const [showExitWarning, setShowExitWarning] = useState(false);
-  const [gameTime, setGameTime] = useState(0);
-  const [isSelectingCartela, setIsSelectingCartela] = useState(false);
+  
+  // Get money level from location state or default
+  const moneyLevel = location.state?.moneyLevel || 10;
 
   useEffect(() => {
-    if (roomId) {
+    if (roomId && !showCartelaSelector) {
       loadGameData();
-    }
-  }, [roomId]);
-
-  useEffect(() => {
-    if (isConnected && socket && roomId) {
       joinRoom();
     }
-  }, [isConnected, socket, roomId]);
+  }, [roomId, showCartelaSelector]);
+
+  // Game timer effect - 10 minutes countdown
+  useEffect(() => {
+    if (gameStartTime && gameData?.status === 'playing') {
+      const interval = setInterval(() => {
+        const elapsed = Date.now() - gameStartTime.getTime();
+        const remaining = Math.max(0, 600000 - elapsed); // 10 minutes max
+        setGameTimeLeft(remaining);
+        
+        if (remaining === 0) {
+          clearInterval(interval);
+        }
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [gameStartTime, gameData?.status]);
 
   useEffect(() => {
     if (socket) {
       socket.on('roomJoined', handleRoomJoined);
-      socket.on('cartelaSelected', handleCartelaSelected);
       socket.on('playerJoined', handlePlayerJoined);
       socket.on('playerLeft', handlePlayerLeft);
       socket.on('gameCountdown', handleGameCountdown);
       socket.on('gameStarted', handleGameStarted);
       socket.on('numberCalled', handleNumberCalled);
       socket.on('numberMarked', handleNumberMarked);
-      socket.on('potentialWinners', handlePotentialWinners);
-      socket.on('winClaimed', handleWinClaimed);
+      socket.on('bingoValidated', handleBingoValidated);
+      socket.on('bingoRejected', handleBingoRejected);
       socket.on('gameEnded', handleGameEnded);
-      socket.on('gameLeft', handleGameLeft);
       socket.on('error', handleError);
 
       return () => {
         socket.off('roomJoined');
-        socket.off('cartelaSelected');
         socket.off('playerJoined');
         socket.off('playerLeft');
         socket.off('gameCountdown');
         socket.off('gameStarted');
         socket.off('numberCalled');
         socket.off('numberMarked');
-        socket.off('potentialWinners');
-        socket.off('winClaimed');
+        socket.off('bingoValidated');
+        socket.off('bingoRejected');
         socket.off('gameEnded');
-        socket.off('gameLeft');
         socket.off('error');
       };
     }
   }, [socket]);
 
-  // Game timer
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (gameData?.status === 'playing') {
-      interval = setInterval(() => {
-        setGameTime(prev => prev + 1);
-      }, 1000);
+  const checkBingoPattern = (card: number[][], markedNumbers: number[]): boolean => {
+    const marked = new Set([...markedNumbers, 0]); // Include FREE space
+    
+    // Check rows
+    for (let row = 0; row < 5; row++) {
+      let count = 0;
+      for (let col = 0; col < 5; col++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      if (count === 5) return true;
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [gameData?.status]);
+    
+    // Check columns
+    for (let col = 0; col < 5; col++) {
+      let count = 0;
+      for (let row = 0; row < 5; row++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      if (count === 5) return true;
+    }
+    
+    // Check diagonals
+    let diagonal1 = 0, diagonal2 = 0;
+    for (let i = 0; i < 5; i++) {
+      if (marked.has(card[i][i])) diagonal1++;
+      if (marked.has(card[i][4-i])) diagonal2++;
+    }
+    if (diagonal1 === 5 || diagonal2 === 5) return true;
+    
+    // Check four corners
+    const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
+    const markedCorners = corners.filter(corner => marked.has(corner)).length;
+    if (markedCorners === 4) return true;
+    
+    return false;
+  };
+
+  const handleCartelaSelect = (cartelaNumber: number, card: number[][]) => {
+    setSelectedCartela(cartelaNumber);
+    setUserCard(card);
+  };
+
+  const handleJoinGameWithCartela = () => {
+    if (!selectedCartela || !userCard) return;
+    
+    setIsJoining(true);
+    if (socket && roomId) {
+      socket.emit('joinGame', { 
+        roomId, 
+        cartelaNumber: selectedCartela,
+        card: userCard 
+      });
+    }
+  };
+
+  const handleBackToHome = () => {
+    if (gameData?.status === 'playing') {
+      setShowExitModal(true);
+    } else {
+      navigate('/');
+    }
+  };
+
+  const handleExitConfirm = () => {
+    if (socket && roomId && gameData?.status !== 'playing') {
+      socket.emit('leaveGame', { roomId });
+    }
+    navigate('/');
+  };
 
   const loadGameData = async () => {
     try {
@@ -112,15 +180,18 @@ const GamePage: React.FC = () => {
         const data = await gameService.getGameDetails(roomId);
         setGameData(data);
         
-        // Check if user needs to select cartela
-        if (data.status === 'waiting' && !data.userCard) {
-          setShowCartelaSelector(true);
+        // Set user's card and marked numbers if available
+        if (data.userCard) {
+          setUserCard(data.userCard);
         }
-        
-        // Update taken cartelas
-        if (data.players) {
-          const taken = data.players.map((p: any) => p.cartelaNumber).filter((num: any) => num != null);
-          setTakenCartelas(taken);
+        if (data.userMarkedNumbers) {
+          setGameData(prev => prev ? {
+            ...prev,
+            userMarkedNumbers: data.userMarkedNumbers
+          } : null);
+        }
+        if (data.userCartelaNumber) {
+          setSelectedCartela(data.userCartelaNumber);
         }
       }
     } catch (error) {
@@ -132,7 +203,7 @@ const GamePage: React.FC = () => {
   };
 
   const joinRoom = () => {
-    if (socket && roomId && isConnected) {
+    if (socket && roomId) {
       console.log('Joining room:', roomId);
       socket.emit('joinRoom', { roomId });
     }
@@ -140,23 +211,19 @@ const GamePage: React.FC = () => {
 
   const handleRoomJoined = (data: any) => {
     console.log('Joined room:', data.roomId);
+    setIsJoining(false);
     if (data.gameState) {
       console.log('Received game state:', data.gameState);
       setGameData(prev => prev ? {
         ...prev,
         ...data.gameState
       } : null);
-    }
-  };
-
-  const handleCartelaSelected = (data: any) => {
-    console.log('Cartela selected:', data);
-    setIsSelectingCartela(false);
-    
-    // Update taken cartelas
-    if (data.players) {
-      const taken = data.players.map((p: any) => p.cartelaNumber).filter((num: any) => num != null);
-      setTakenCartelas(taken);
+      setTakenCartelas(data.gameState.takenCartelas || []);
+      
+      // If game is already playing, hide cartela selector
+      if (data.gameState.status === 'playing') {
+        setShowCartelaSelector(false);
+      }
     }
   };
 
@@ -168,11 +235,13 @@ const GamePage: React.FC = () => {
       players: data.players,
       totalPot: data.totalPot
     } : null);
+    setTakenCartelas(data.takenCartelas || []);
     
-    // Update taken cartelas
-    if (data.players) {
-      const taken = data.players.map((p: any) => p.cartelaNumber).filter((num: any) => num != null);
-      setTakenCartelas(taken);
+    // If this is the current user joining, hide cartela selector and load their card
+    if (data.players.some((p: any) => p.telegramId === user?.telegramId)) {
+      setShowCartelaSelector(false);
+      // Load user's card data
+      loadUserGameData();
     }
   };
 
@@ -184,12 +253,7 @@ const GamePage: React.FC = () => {
       players: data.players,
       totalPot: data.totalPot
     } : null);
-    
-    // Update taken cartelas
-    if (data.players) {
-      const taken = data.players.map((p: any) => p.cartelaNumber).filter((num: any) => num != null);
-      setTakenCartelas(taken);
-    }
+    setTakenCartelas(data.takenCartelas || []);
   };
 
   const handleGameCountdown = (data: any) => {
@@ -199,20 +263,55 @@ const GamePage: React.FC = () => {
 
   const handleGameStarted = (data: any) => {
     console.log('Game started:', data);
+    setGameStartTime(new Date(data.gameStartTime || Date.now()));
     setGameData(prev => prev ? {
       ...prev,
       status: 'playing',
       calledNumbers: data.calledNumbers,
-      totalPot: data.totalPot,
-      gameDuration: data.gameDuration
+      totalPot: data.totalPot
     } : null);
     setCountdown(null);
-    setGameTime(0);
+    setShowCartelaSelector(false); // Hide cartela selector when game starts
+    
+    // Load user's card and marked numbers
+    loadUserGameData();
+  };
+
+  const loadUserGameData = async () => {
+    try {
+      if (roomId && user?.telegramId) {
+        const data = await gameService.getGameDetails(roomId);
+        if (data) {
+          // Set user's card and marked numbers
+          if (data.userCard) {
+            setUserCard(data.userCard);
+          }
+          if (data.userMarkedNumbers) {
+            setGameData(prev => prev ? {
+              ...prev,
+              userMarkedNumbers: data.userMarkedNumbers
+            } : null);
+          }
+          if (data.userCartelaNumber) {
+            setSelectedCartela(data.userCartelaNumber);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load user game data:', error);
+    }
   };
 
   const handleNumberCalled = (data: any) => {
+    console.log('Number called:', data.number);
     setCurrentBallNumber(data.number);
     setIsAnimating(true);
+    
+    // Update called numbers immediately
+    setGameData(prev => prev ? {
+      ...prev,
+      calledNumbers: [...prev.calledNumbers, data.number].filter((n, i, arr) => arr.indexOf(n) === i)
+    } : null);
     
     // Play number announcement (text-to-speech)
     if ('speechSynthesis' in window) {
@@ -229,25 +328,44 @@ const GamePage: React.FC = () => {
     setIsAnimating(false);
     setGameData(prev => prev ? {
       ...prev,
-      currentNumber: currentBallNumber,
-      calledNumbers: [...prev.calledNumbers, currentBallNumber!].filter((n, i, arr) => arr.indexOf(n) === i)
+      currentNumber: currentBallNumber
     } : null);
     setCurrentBallNumber(null);
   };
 
   const handleNumberMarked = (data: any) => {
     console.log('Number marked:', data.number);
+    // Update the user's marked numbers when server confirms
+    setGameData(prev => prev ? {
+      ...prev,
+      userMarkedNumbers: [...prev.userMarkedNumbers, data.number].filter((n, i, arr) => arr.indexOf(n) === i)
+    } : null);
   };
 
-  const handlePotentialWinners = (data: any) => {
-    console.log('Potential winners:', data);
+  const handleBingoClick = () => {
+    if (socket && roomId) {
+      console.log('Checking bingo with numbers:', gameData?.userMarkedNumbers);
+      socket.emit('claimBingo', { 
+        roomId, 
+        markedNumbers: gameData?.userMarkedNumbers || [] 
+      });
+    }
   };
 
-  const handleWinClaimed = (data: any) => {
-    console.log('Win claimed:', data);
+  const handleBingoValidated = (data: any) => {
+    console.log('Bingo validated:', data);
+    // Show success message
+    alert('🎉 BINGO! Your claim is being validated...');
+    // The game will end automatically from the server
+  };
+
+  const handleBingoRejected = (data: any) => {
+    alert(`Bingo rejected: ${data.reason}`);
   };
 
   const handleGameEnded = (data: any) => {
+    setGameStartTime(null);
+    setGameTimeLeft(null);
     setGameData(prev => prev ? {
       ...prev,
       status: 'finished',
@@ -260,7 +378,8 @@ const GamePage: React.FC = () => {
       if (data.winners && data.winners.length > 0) {
         const isWinner = data.winners.some((w: any) => w.telegramId === user?.telegramId);
         if (isWinner) {
-          alert(`🎉 Congratulations! You won ${data.winners.find((w: any) => w.telegramId === user?.telegramId)?.prizeMoney} Birr!`);
+          const winner = data.winners.find((w: any) => w.telegramId === user?.telegramId);
+          alert(`🎉 Congratulations! You won ${winner?.prizeMoney} Birr!`);
         } else {
           alert(data.message);
         }
@@ -271,57 +390,21 @@ const GamePage: React.FC = () => {
     }, 5000);
   };
 
-  const handleGameLeft = (data: any) => {
-    alert(data.message);
-    navigate('/');
-  };
-
   const handleError = (error: any) => {
     alert(error.message);
-  };
-
-  const handleCartelaSelect = async (cartelaNumber: number) => {
-    if (!socket || !roomId || !isConnected) {
-      alert('Connection error. Please refresh the page.');
-      return;
-    }
-
-    setIsSelectingCartela(true);
-    try {
-      // First, get a preview of the card
-      const response = await gameService.selectCartela(roomId, cartelaNumber);
-      setPreviewCard(response.card);
-      setSelectedCartela(cartelaNumber);
-      setShowCartelaSelector(false);
-      setShowCartelaPreview(true);
-    } catch (error: any) {
-      alert(error.message || 'Failed to select cartela');
-    } finally {
-      setIsSelectingCartela(false);
-    }
-  };
-
-  const handleConfirmCartela = () => {
-    if (socket && roomId && selectedCartela && isConnected) {
-      socket.emit('selectCartela', { roomId, cartelaNumber: selectedCartela });
-      setShowCartelaPreview(false);
-    }
-  };
-
-  const handleJoinGame = () => {
-    if (socket && roomId && gameData?.userCard && isConnected) {
-      socket.emit('joinGame', { roomId });
-    }
-  };
-
-  const handleLeaveGame = () => {
-    if (socket && roomId && gameData?.status === 'waiting' && isConnected) {
-      socket.emit('leaveGame', { roomId });
-    }
+    setIsJoining(false);
   };
 
   const handleNumberClick = (number: number) => {
-    if (socket && roomId && gameData?.status === 'playing' && gameData.calledNumbers.includes(number) && isConnected) {
+    console.log('Number clicked:', number, {
+      roomId,
+      gameStatus: gameData?.status,
+      calledNumbers: gameData?.calledNumbers,
+      isCalled: gameData?.calledNumbers?.includes(number)
+    });
+    
+    if (socket && roomId && gameData?.status === 'playing' && gameData.calledNumbers.includes(number)) {
+      console.log('Emitting markNumber for:', number);
       socket.emit('markNumber', { roomId, number });
       
       // Optimistically update UI
@@ -329,20 +412,6 @@ const GamePage: React.FC = () => {
         ...prev,
         userMarkedNumbers: [...prev.userMarkedNumbers, number].filter((n, i, arr) => arr.indexOf(n) === i)
       } : null);
-    }
-  };
-
-  const handleClaimWin = (pattern: string) => {
-    if (socket && roomId && gameData?.status === 'playing' && isConnected) {
-      socket.emit('claimWin', { roomId, winPattern: pattern });
-    }
-  };
-
-  const handleBackClick = () => {
-    if (gameData?.status === 'playing') {
-      setShowExitWarning(true);
-    } else {
-      navigate('/');
     }
   };
 
@@ -355,11 +424,21 @@ const GamePage: React.FC = () => {
     return '';
   };
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  // Show cartela selector first (only if game hasn't started and user hasn't joined yet)
+  if (showCartelaSelector && gameData?.status !== 'playing') {
+    // Always show cartela selector if game hasn't started, regardless of whether user is in game
+    return (
+      <CartelaSelector
+        onCartelaSelect={handleCartelaSelect}
+        onJoinGame={handleJoinGameWithCartela}
+        onBack={() => navigate('/')}
+        moneyLevel={moneyLevel}
+        isJoining={isJoining}
+        takenCartelas={takenCartelas}
+        currentUserCartela={selectedCartela}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -388,136 +467,39 @@ const GamePage: React.FC = () => {
     );
   }
 
-  if (!isConnected) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center glass-card p-8 rounded-xl">
-          <h2 className="text-2xl font-bold text-white mb-4">Connection Error</h2>
-          <p className="text-white/80 mb-4">Unable to connect to game server</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
+      <ExitConfirmationModal
+        isOpen={showExitModal}
+        onClose={() => setShowExitModal(false)}
+        onConfirm={handleExitConfirm}
+        gameStarted={gameData?.status === 'playing'}
+        entryFee={moneyLevel}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <button
-          onClick={handleBackClick}
+          onClick={handleBackToHome}
           className="flex items-center space-x-2 text-white hover:text-yellow-400 transition-colors"
+          disabled={gameData.status === 'playing'}
         >
           <ArrowLeft size={20} />
           <span>Back</span>
         </button>
-        <h1 className="text-xl font-bold text-white">
-          {gameData.moneyLevel} Birr Game
-        </h1>
-        {gameData.status === 'waiting' && (
-          <button
-            onClick={handleLeaveGame}
-            className="flex items-center space-x-2 text-red-400 hover:text-red-300 transition-colors"
-          >
-            <LogOut size={20} />
-            <span>Leave Game</span>
-          </button>
-        )}
+        <div className="text-center">
+          <h1 className="text-xl font-bold text-white">
+            {gameData.moneyLevel} Birr Game
+          </h1>
+          {selectedCartela && (
+            <p className="text-white/60 text-sm">Cartela #{selectedCartela}</p>
+          )}
+        </div>
       </div>
-
-      {/* Exit Warning Modal */}
-      {showExitWarning && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass-card p-6 rounded-xl max-w-md mx-4">
-            <div className="text-center">
-              <AlertTriangle className="mx-auto mb-4 text-red-400" size={48} />
-              <h3 className="text-xl font-bold text-white mb-2">⚠️ Warning</h3>
-              <p className="text-white/80 mb-6">
-                Once you move out of the game, there is no refund.
-              </p>
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => setShowExitWarning(false)}
-                  className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                >
-                  Stay in Game
-                </button>
-                <button
-                  onClick={() => navigate('/')}
-                  className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-                >
-                  Leave Anyway
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cartela Selector */}
-      {showCartelaSelector && (
-        <CartelaSelector
-          onCartelaSelect={handleCartelaSelect}
-          onCancel={() => navigate('/')}
-          selectedCartela={selectedCartela}
-          takenCartelas={takenCartelas}
-          isLoading={isSelectingCartela}
-        />
-      )}
-
-      {/* Cartela Preview */}
-      {showCartelaPreview && previewCard && (
-        <div className="glass-card p-6 rounded-xl">
-          <div className="text-center mb-6">
-            <h2 className="text-2xl font-bold text-white mb-2">🎯 Your Cartela #{selectedCartela}</h2>
-            <p className="text-white/80 text-sm">
-              Preview your bingo card before confirming
-            </p>
-          </div>
-
-          {/* Preview Card */}
-          <div className="flex justify-center mb-6">
-            <BingoCard
-              card={previewCard}
-              markedNumbers={[]}
-              onNumberClick={() => {}}
-              calledNumbers={[]}
-              gameStatus="waiting"
-            />
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={() => {
-                setShowCartelaPreview(false);
-                setShowCartelaSelector(true);
-                setSelectedCartela(null);
-                setPreviewCard(null);
-              }}
-              className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-            >
-              Change Cartela
-            </button>
-            <button
-              onClick={handleConfirmCartela}
-              className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center space-x-2"
-            >
-              <Check size={16} />
-              <span>Confirm & Join</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Game Status */}
       <div className="glass-card p-4 rounded-xl">
-        <div className="grid grid-cols-4 gap-4 text-center">
+        <div className="grid grid-cols-3 gap-4 text-center">
           <div>
             <Users className="mx-auto mb-1 text-blue-400" size={20} />
             <p className="text-white font-bold">{gameData.playerCount}</p>
@@ -534,49 +516,22 @@ const GamePage: React.FC = () => {
             <Clock className="mx-auto mb-1 text-green-400" size={20} />
             <p className="text-white font-bold">
               {gameData.status === 'waiting' ? 'Waiting' : 
-               gameData.status === 'playing' ? formatTime(gameTime) : 'Finished'}
+               gameData.status === 'playing' ? 'Playing' : 'Finished'}
             </p>
             <p className="text-white/60 text-xs">Status</p>
           </div>
-          <div>
-            <div className="mx-auto mb-1 text-purple-400" style={{ width: '20px', height: '20px' }}>
-              🎟️
+        </div>
+        
+        {/* Game Timer */}
+        {gameTimeLeft !== null && gameData.status === 'playing' && (
+          <div className="mt-4 text-center">
+            <div className="text-2xl font-bold text-yellow-400">
+              {Math.floor(gameTimeLeft / 60000)}:{((gameTimeLeft % 60000) / 1000).toFixed(0).padStart(2, '0')}
             </div>
-            <p className="text-white font-bold">
-              {gameData.userCartelaNumber || '-'}
-            </p>
-            <p className="text-white/60 text-xs">Cartela</p>
+            <p className="text-white/60 text-xs">Time Remaining</p>
           </div>
-        </div>
+        )}
       </div>
-
-      {/* Join Game Button */}
-      {gameData.status === 'waiting' && gameData.userCard && !showCartelaSelector && !showCartelaPreview && !gameData.userHasJoined && (
-        <div className="glass-card p-4 rounded-xl text-center">
-          <button
-            onClick={handleJoinGame}
-            className="px-8 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 font-bold text-lg"
-          >
-            🎮 Join Game ({gameData.moneyLevel} Birr)
-          </button>
-          <p className="text-white/60 text-sm mt-2">
-            ⚠️ Once you join, you cannot leave without losing your entry fee
-          </p>
-        </div>
-      )}
-
-      {/* Waiting for Game to Start */}
-      {gameData.status === 'waiting' && gameData.userCard && gameData.userHasJoined && !showCartelaSelector && !showCartelaPreview && (
-        <div className="glass-card p-4 rounded-xl text-center">
-          <div className="text-green-400 mb-2">
-            <Check size={24} className="mx-auto" />
-          </div>
-          <h3 className="text-lg font-bold text-white mb-2">✅ Joined Successfully!</h3>
-          <p className="text-white/80 text-sm">
-            Waiting for the game to start. You cannot leave now.
-          </p>
-        </div>
-      )}
 
       {/* Countdown */}
       {countdown && countdown > 0 && (
@@ -603,41 +558,68 @@ const GamePage: React.FC = () => {
           <p className="text-white/80 text-sm mt-2">
             Numbers Called: {gameData.calledNumbers.length}
           </p>
-          {gameData.gameDuration && (
-            <p className="text-white/60 text-xs mt-1">
-              Game Time: {formatTime(gameTime)} / ~{Math.round(gameData.gameDuration.estimatedDuration / 1000)}s
-            </p>
-          )}
         </div>
       )}
 
       {/* Bingo Card */}
-      {gameData.userCard && !showCartelaSelector && !showCartelaPreview && (
+      {userCard && gameData.status === 'playing' && (
         <div className="flex justify-center">
           <BingoCard
-            card={gameData.userCard}
+            card={userCard}
             markedNumbers={gameData.userMarkedNumbers}
             onNumberClick={handleNumberClick}
             calledNumbers={gameData.calledNumbers}
-            onClaimWin={handleClaimWin}
-            gameStatus={gameData.status}
+            currentNumber={gameData.currentNumber}
+            isGameActive={gameData.status === 'playing'}
+            showBingoButton={gameData.status === 'playing'}
+            onBingoClick={handleBingoClick}
           />
         </div>
       )}
 
-      {/* Called Numbers */}
-      {gameData.calledNumbers.length > 0 && (
+      {/* Game Instructions */}
+      {gameData.status === 'waiting' && userCard && (
+        <div className="glass-card p-4 rounded-xl text-center">
+          <p className="text-white/80">
+            Your cartela #{selectedCartela} is ready! The game will start when we have enough players.
+          </p>
+        </div>
+      )}
+
+      {/* Game Instructions for Playing */}
+      {gameData.status === 'playing' && (
         <div className="glass-card p-4 rounded-xl">
-          <h3 className="text-lg font-bold text-white mb-3">Called Numbers</h3>
-          <div className="grid grid-cols-10 gap-2">
-            {gameData.calledNumbers.map((number) => (
-              <div
-                key={number}
-                className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-sm font-bold"
-              >
-                {number}
-              </div>
-            ))}
+          <h3 className="text-lg font-bold text-white mb-2">🎯 How to Play</h3>
+          <div className="text-white/80 text-sm space-y-1">
+            <p>• Watch for called numbers and manually mark them on your card</p>
+            <p>• You must remember which numbers were called - they won't be highlighted</p>
+            <p>• Complete any line (horizontal, vertical, diagonal) or four corners</p>
+            <p>• Click "BINGO!" to check if you have a winning pattern</p>
+            <p>• The system will validate your claim and award prizes if correct</p>
+          </div>
+        </div>
+      )}
+
+      {/* Called Numbers History */}
+      {gameData.calledNumbers && gameData.calledNumbers.length > 0 && (
+        <div className="glass-card p-4 rounded-xl">
+          <h3 className="text-lg font-bold text-white mb-3">📋 Called Numbers History ({gameData.calledNumbers.length})</h3>
+          <div className="max-h-48 overflow-y-auto">
+            <div className="grid grid-cols-10 gap-2">
+              {gameData.calledNumbers.map((number) => (
+                <div
+                  key={number}
+                  className="w-8 h-8 text-white rounded-full flex items-center justify-center text-sm font-bold bg-blue-500"
+                >
+                  {number}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3 text-center">
+            <p className="text-white/60 text-sm">
+              Scroll to see all called numbers.
+            </p>
           </div>
         </div>
       )}
@@ -650,7 +632,7 @@ const GamePage: React.FC = () => {
             <div className="space-y-2">
               {gameData.winners.map((winner: any, index: number) => (
                 <p key={index} className="text-white text-lg">
-                  {winner.firstName} wins {winner.prizeMoney} Birr! ({winner.winPattern})
+                  {winner.firstName} wins {winner.prizeMoney} Birr!
                 </p>
               ))}
             </div>

@@ -1,133 +1,275 @@
-import React, { useState } from 'react';
-import { Check, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, RefreshCw, Play, Check, X } from 'lucide-react';
 
 interface CartelaSelectorProps {
-  onCartelaSelect: (cartelaNumber: number) => void;
-  onCancel: () => void;
-  selectedCartela?: number | null;
-  takenCartelas: number[];
-  isLoading?: boolean;
+  onCartelaSelect: (cartelaNumber: number, card: number[][]) => void;
+  onJoinGame: () => void;
+  onBack: () => void;
+  moneyLevel: number;
+  isJoining: boolean;
+  takenCartelas?: number[]; // Array of already taken cartela numbers
+  currentUserCartela?: number | null; // Current user's selected cartela number
 }
 
 const CartelaSelector: React.FC<CartelaSelectorProps> = ({
   onCartelaSelect,
-  onCancel,
-  selectedCartela,
-  takenCartelas,
-  isLoading = false
+  onJoinGame,
+  onBack,
+  moneyLevel,
+  isJoining,
+  takenCartelas = [],
+  currentUserCartela = null
 }) => {
-  const [hoveredCartela, setHoveredCartela] = useState<number | null>(null);
+  const [selectedCartela, setSelectedCartela] = useState<number | null>(currentUserCartela);
+  const [previewCard, setPreviewCard] = useState<number[][] | null>(null);
+  const [isCartelaTaken, setIsCartelaTaken] = useState<{[key: number]: boolean}>({});
 
-  const isCartelaTaken = (cartelaNumber: number) => {
-    return takenCartelas.includes(cartelaNumber);
-  };
+  // Initialize taken cartelas
+  useEffect(() => {
+    const takenMap = takenCartelas.reduce((acc, num) => ({
+      ...acc,
+      [num]: true
+    }), {});
+    setIsCartelaTaken(takenMap);
+  }, [takenCartelas]);
 
-  const isCartelaSelected = (cartelaNumber: number) => {
-    return selectedCartela === cartelaNumber;
+  const generateBingoCard = (): number[][] => {
+    const card = [];
+    const ranges = [
+      [1, 15],   // B column
+      [16, 30],  // I column
+      [31, 45],  // N column
+      [46, 60],  // G column
+      [61, 75]   // O column
+    ];
+
+    for (let col = 0; col < 5; col++) {
+      const column = [];
+      const [min, max] = ranges[col];
+      const usedNumbers = new Set();
+      
+      for (let row = 0; row < 5; row++) {
+        if (col === 2 && row === 2) {
+          // Center is FREE space
+          column.push(0);
+        } else {
+          let num;
+          do {
+            num = Math.floor(Math.random() * (max - min + 1)) + min;
+          } while (usedNumbers.has(num));
+          usedNumbers.add(num);
+          column.push(num);
+        }
+      }
+      card.push(column);
+    }
+
+    return card;
   };
 
   const handleCartelaClick = (cartelaNumber: number) => {
-    if (!isCartelaTaken(cartelaNumber) && !isLoading) {
-      onCartelaSelect(cartelaNumber);
+    // Don't allow selecting already taken cartelas (except if it's the current user's cartela)
+    if (isCartelaTaken[cartelaNumber] && cartelaNumber !== currentUserCartela) {
+      return;
+    }
+    
+    const newCard = generateBingoCard();
+    setSelectedCartela(cartelaNumber);
+    setPreviewCard(newCard);
+    onCartelaSelect(cartelaNumber, newCard);
+  };
+
+  const handleRegenerateCard = () => {
+    if (selectedCartela) {
+      handleCartelaClick(selectedCartela);
     }
   };
 
-  const renderCartelaButton = (cartelaNumber: number) => {
-    const taken = isCartelaTaken(cartelaNumber);
-    const selected = isCartelaSelected(cartelaNumber);
-    const hovered = hoveredCartela === cartelaNumber;
+  const getCartelaStatus = (number: number) => {
+    if (selectedCartela === number) return 'selected';
+    if (isCartelaTaken[number] && number !== currentUserCartela) return 'taken';
+    return 'available';
+  };
 
-    let buttonClasses = 'w-12 h-12 rounded-lg font-bold text-sm transition-all duration-200 flex items-center justify-center';
+  const getCartelaStyles = (number: number) => {
+    const status = getCartelaStatus(number);
     
-    if (taken) {
-      buttonClasses += ' bg-red-500 text-white cursor-not-allowed';
-    } else if (selected) {
-      buttonClasses += ' bg-green-500 text-white cursor-pointer shadow-lg scale-105';
-    } else if (hovered) {
-      buttonClasses += ' bg-blue-400 text-white cursor-pointer shadow-md scale-105';
-    } else {
-      buttonClasses += ' bg-gray-700 text-white hover:bg-gray-600 cursor-pointer';
+    switch (status) {
+      case 'selected':
+        return 'bg-green-500 text-white border-green-400 scale-105 shadow-lg z-10';
+      case 'taken':
+        return 'bg-red-500/20 text-white/50 border-red-500/30 cursor-not-allowed';
+      case 'available':
+        return 'bg-gray-500/20 text-white border-gray-400/30 hover:bg-gray-400/30 hover:scale-105 cursor-pointer';
+      default:
+        return '';
     }
-
-    return (
-      <button
-        key={cartelaNumber}
-        className={buttonClasses}
-        onClick={() => handleCartelaClick(cartelaNumber)}
-        onMouseEnter={() => setHoveredCartela(cartelaNumber)}
-        onMouseLeave={() => setHoveredCartela(null)}
-        disabled={taken || isLoading}
-      >
-        {taken ? (
-          <X size={16} />
-        ) : selected ? (
-          <Check size={16} />
-        ) : (
-          cartelaNumber
-        )}
-      </button>
-    );
   };
 
   return (
-    <div className="glass-card p-6 rounded-xl">
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold text-white mb-2">🎟️ Select Your Cartela</h2>
-        <p className="text-white/80 text-sm">
-          Choose a unique cartela number (1-100) to generate your bingo card
-        </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={onBack}
+          className="flex items-center space-x-2 text-white hover:text-yellow-400 transition-colors"
+          disabled={isJoining}
+        >
+          <ArrowLeft size={20} />
+          <span>Back</span>
+        </button>
+        <h1 className="text-xl font-bold text-white">
+          Select Your Cartela - {moneyLevel} Birr
+        </h1>
+      </div>
+
+      {/* Instructions */}
+      <div className="glass-card p-4 rounded-xl">
+        <h3 className="text-lg font-bold text-white mb-2">📋 How to Select</h3>
+        <div className="text-white/80 text-sm space-y-1">
+          <p>• Choose any cartela number (1-100) to generate your unique bingo card</p>
+          <p>• You can regenerate the same cartela for a different card layout</p>
+          <p>• Once you join the game, you cannot change your cartela</p>
+        </div>
       </div>
 
       {/* Cartela Grid */}
-      <div className="grid grid-cols-10 gap-2 mb-6 max-h-96 overflow-y-auto">
-        {Array.from({ length: 100 }, (_, i) => i + 1).map(renderCartelaButton)}
+      <div className="glass-card p-6 rounded-xl">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold text-white">Choose Your Cartela (1-100)</h3>
+          <div className="flex items-center space-x-2 text-xs">
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-green-500 mr-1"></div>
+              <span>Selected</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-red-500/20 mr-1"></div>
+              <span>Taken</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-gray-500/20 mr-1"></div>
+              <span>Available</span>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-10 gap-2 mb-6">
+          {Array.from({ length: 100 }, (_, i) => i + 1).map((number) => (
+            <button
+              key={number}
+              onClick={() => handleCartelaClick(number)}
+              disabled={isJoining || (isCartelaTaken[number] && number !== currentUserCartela)}
+              className={`aspect-square flex items-center justify-center text-sm font-bold rounded-lg border-2 transition-all duration-200 relative ${
+                getCartelaStyles(number)
+              } ${isJoining ? 'opacity-50' : ''}`}
+            >
+              {selectedCartela === number && (
+                <Check className="absolute top-0 right-0 -mt-1 -mr-1 bg-green-500 rounded-full p-0.5" size={16} />
+              )}
+              {isCartelaTaken[number] && number !== currentUserCartela ? (
+                <X className="absolute top-0 right-0 -mt-1 -mr-1 bg-red-500 rounded-full p-0.5" size={16} />
+              ) : null}
+              {number}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Legend */}
-      <div className="flex items-center justify-center space-x-6 text-sm">
-        <div className="flex items-center space-x-2">
-          <div className="w-4 h-4 bg-gray-700 rounded"></div>
-          <span className="text-white/80">Available</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <div className="w-4 h-4 bg-green-500 rounded"></div>
-          <span className="text-white/80">Selected</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <div className="w-4 h-4 bg-red-500 rounded"></div>
-          <span className="text-white/80">Taken</span>
-        </div>
-      </div>
+      {/* Card Preview */}
+      {previewCard && (
+        <div className="glass-card p-6 rounded-xl">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-white">
+              Cartela #{selectedCartela} Preview
+            </h3>
+            <button
+              onClick={handleRegenerateCard}
+              disabled={isJoining}
+              className="flex items-center space-x-2 bg-white/10 text-white px-3 py-2 rounded-lg hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={16} />
+              <span>Regenerate</span>
+            </button>
+          </div>
 
-      {/* Action Buttons */}
-      <div className="flex justify-center space-x-4 mt-6">
-        <button
-          onClick={onCancel}
-          disabled={isLoading}
-          className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          Cancel
-        </button>
-        {selectedCartela && (
+          {/* Mini Bingo Card Preview */}
+          <div className="bg-white rounded-xl p-4 mb-4">
+            <div className="grid grid-cols-5 gap-1">
+              {/* Headers */}
+              {['B', 'I', 'N', 'G', 'O'].map((header) => (
+                <div
+                  key={header}
+                  className="aspect-square flex items-center justify-center text-sm font-bold text-gray-800 bg-yellow-400 rounded border"
+                >
+                  {header}
+                </div>
+              ))}
+              
+              {/* Card cells */}
+              {Array.from({ length: 5 }, (_, row) =>
+                Array.from({ length: 5 }, (_, col) => {
+                  const number = previewCard[col][row];
+                  return (
+                    <div
+                      key={`${col}-${row}`}
+                      className={`aspect-square flex items-center justify-center text-xs font-bold rounded border ${
+                        number === 0
+                          ? 'bg-yellow-200 text-gray-800'
+                          : 'bg-gray-50 text-gray-800'
+                      }`}
+                    >
+                      {number === 0 ? 'FREE' : number}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Join Game Button */}
           <button
-            onClick={() => onCartelaSelect(selectedCartela)}
-            disabled={isLoading}
-            className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            onClick={onJoinGame}
+            disabled={isJoining || selectedCartela === null}
+            className={`w-full py-4 px-6 rounded-lg font-bold text-lg transition-all duration-200 flex items-center justify-center space-x-3 ${
+              isJoining || selectedCartela === null
+                ? 'bg-gray-500 text-white cursor-not-allowed'
+                : 'bg-gradient-to-r from-green-500 to-blue-600 text-white hover:from-green-600 hover:to-blue-700 hover:scale-105'
+            }`}
           >
-            {isLoading ? 'Selecting...' : `Select Cartela ${selectedCartela}`}
+            {isJoining ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Joining Game...</span>
+              </>
+            ) : (
+              <>
+                <Play size={20} />
+                <span>
+                  {selectedCartela 
+                    ? `Join Game with Cartela #${selectedCartela}`
+                    : 'Please select a cartela'}
+                </span>
+              </>
+            )}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
+      {/* Warning */}
       {selectedCartela && (
-        <div className="mt-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-center">
-          <p className="text-green-400 text-sm">
-            🎯 You selected Cartela #{selectedCartela}
-          </p>
+        <div className="glass-card p-4 rounded-xl border-yellow-400/50">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></div>
+            <div>
+              <p className="text-white font-medium">⚠️ Important Notice</p>
+              <p className="text-white/70 text-sm">
+                Once you join the game, you cannot change your cartela or leave without losing your entry fee.
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 };
 
-export default CartelaSelector; 
+export default CartelaSelector;

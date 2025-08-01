@@ -108,7 +108,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Create new game
+      // Create new game and add creator as first player
       const game = await gameService.createGame(moneyLevel, socket.telegramId);
       socket.join(game.roomId);
       socket.currentRoom = game.roomId;
@@ -124,38 +124,10 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Select cartela
-  socket.on('selectCartela', async (data) => {
-    try {
-      const { roomId, cartelaNumber } = data;
-      
-      // Check if user is registered
-      const user = await User.findOne({ telegramId: socket.telegramId });
-      if (!user || !user.isRegistered) {
-        socket.emit('error', { message: 'Please complete registration first' });
-        return;
-      }
-
-      // Select cartela
-      await gameService.selectCartela(roomId, socket.telegramId, cartelaNumber);
-      socket.join(roomId);
-      socket.currentRoom = roomId;
-
-      socket.emit('cartelaSelected', {
-        roomId: roomId,
-        cartelaNumber: cartelaNumber
-      });
-
-    } catch (error) {
-      console.error('Select cartela error:', error);
-      socket.emit('error', { message: error.message });
-    }
-  });
-
-  // Join existing game (after cartela selection)
+  // Join existing game
   socket.on('joinGame', async (data) => {
     try {
-      const { roomId } = data;
+      const { roomId, cartelaNumber, card } = data;
       
       // Check if user is registered
       const user = await User.findOne({ telegramId: socket.telegramId });
@@ -165,7 +137,11 @@ io.on('connection', (socket) => {
       }
 
       // Join the game
-      await gameService.joinGame(roomId, socket.telegramId);
+      if (cartelaNumber && card) {
+        await gameService.joinGameWithCartela(roomId, socket.telegramId, cartelaNumber, card);
+      } else {
+        await gameService.joinGame(roomId, socket.telegramId);
+      }
       socket.join(roomId);
       socket.currentRoom = roomId;
 
@@ -179,7 +155,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Leave game (before it starts)
+  // Leave game
   socket.on('leaveGame', async (data) => {
     try {
       const { roomId } = data;
@@ -188,10 +164,7 @@ io.on('connection', (socket) => {
       socket.leave(roomId);
       socket.currentRoom = null;
 
-      socket.emit('gameLeft', {
-        roomId: roomId,
-        message: 'You have left the game and your entry fee has been refunded.'
-      });
+      socket.emit('gameLeft', { roomId });
 
     } catch (error) {
       console.error('Leave game error:', error);
@@ -221,9 +194,9 @@ io.on('connection', (socket) => {
             totalPot: game.moneyLevel * game.players.length,
             players: game.players.map(p => ({
               telegramId: p.telegramId,
-              firstName: p.firstName,
-              cartelaNumber: p.cartelaNumber
-            }))
+              firstName: p.firstName
+            })),
+            takenCartelas: game.takenCartelas
           }
         });
       } else {
@@ -232,6 +205,39 @@ io.on('connection', (socket) => {
     } catch (error) {
       console.error('Join room error:', error);
       socket.emit('error', { message: error.message });
+    }
+  });
+
+  // Claim bingo
+  socket.on('claimBingo', async (data) => {
+    try {
+      const { roomId, markedNumbers } = data;
+      
+      await gameService.validateBingo(roomId, socket.telegramId, markedNumbers);
+      
+      socket.emit('bingoValidated', { roomId });
+      
+      // End the game with this winner
+      const game = await gameService.getGameByRoomId(roomId);
+      if (game) {
+        const winner = game.players.find(p => p.telegramId === socket.telegramId);
+        if (winner) {
+          // Clear any running intervals
+          if (gameService.numberCallingIntervals.has(roomId)) {
+            clearInterval(gameService.numberCallingIntervals.get(roomId));
+            gameService.numberCallingIntervals.delete(roomId);
+          }
+          
+          await gameService.endGame(roomId, [winner]);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Claim bingo error:', error);
+      socket.emit('bingoRejected', { 
+        roomId: data.roomId, 
+        reason: error.message 
+      });
     }
   });
 
@@ -245,20 +251,6 @@ io.on('connection', (socket) => {
       socket.emit('numberMarked', { number });
     } catch (error) {
       console.error('Mark number error:', error);
-      socket.emit('error', { message: error.message });
-    }
-  });
-
-  // Claim win
-  socket.on('claimWin', async (data) => {
-    try {
-      const { roomId, winPattern } = data;
-      
-      await gameService.claimWin(roomId, socket.telegramId, winPattern);
-      
-      socket.emit('winClaimed', { winPattern });
-    } catch (error) {
-      console.error('Claim win error:', error);
       socket.emit('error', { message: error.message });
     }
   });

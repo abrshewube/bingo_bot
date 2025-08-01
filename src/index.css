@@ -18,12 +18,12 @@
   }
 
   .bingo-cell {
-    @apply aspect-square flex items-center justify-center text-xl font-bold rounded-lg border-2 border-gray-300 transition-all duration-300 cursor-pointer hover:scale-105;
+    @apply aspect-square flex items-center justify-center text-xl font-bold rounded-lg border-2 border-gray-300 transition-all duration-300 relative;
     min-height: 60px;
   }
 
   .bingo-cell.marked {
-    @apply bg-gradient-to-br from-blue-500 to-blue-600 text-white border-blue-700 scale-95 shadow-lg;
+    @apply bg-gradient-to-br from-blue-500 to-blue-600 text-white border-blue-700 shadow-lg transform scale-95;
   }
 
   .bingo-cell.free {
@@ -31,7 +31,7 @@
   }
 
   .bingo-cell.unmarked {
-    @apply bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 hover:from-gray-100 hover:to-gray-200;
+    @apply bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800;
   }
 
   .ball-container {
@@ -128,5 +128,71 @@
 
   .glass-card {
     @apply bg-white/10 backdrop-blur-md rounded-xl border border-white/20 shadow-xl;
+  }
+
+  /* Custom animations for ball display */
+  .rotate-360 {
+    transform: rotate(360deg);
+  }
+
+  .rotate-720 {
+    transform: rotate(720deg);
+  }
+
+  .scale-80 {
+    transform: scale(0.8);
+  }
+
+  .scale-0 {
+    transform: scale(0);
+  }
+
+  .scale-100 {
+    transform: scale(1);
+  }
+
+  /* Ball rolling animation */
+  .animate-spin {
+    animation: spin 2s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Bounce animation */
+  .animate-bounce {
+    animation: bounce 0.6s ease-in-out;
+  }
+
+  @keyframes bounce {
+    0%, 20%, 50%, 80%, 100% {
+      transform: translateY(0) scale(1);
+    }
+    40% {
+      transform: translateY(-20px) scale(1.1);
+    }
+    60% {
+      transform: translateY(-10px) scale(1.05);
+    }
+  }
+
+  /* Pulse animation */
+  .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: .5;
+    }
   }
 }
