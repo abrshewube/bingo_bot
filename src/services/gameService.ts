@@ -31,6 +31,31 @@ export const gameService = {
     return response.data;
   },
 
+  async selectCartela(roomId: string, cartelaNumber: number) {
+    const response = await api.post(`/games/${roomId}/cartela`, { cartelaNumber });
+    return response.data;
+  },
+
+  async joinGame(roomId: string) {
+    const response = await api.post(`/games/${roomId}/join`);
+    return response.data;
+  },
+
+  async leaveGame(roomId: string) {
+    const response = await api.post(`/games/${roomId}/leave`);
+    return response.data;
+  },
+
+  async markNumber(roomId: string, number: number) {
+    const response = await api.post(`/games/${roomId}/mark`, { number });
+    return response.data;
+  },
+
+  async claimWin(roomId: string, winPattern: string) {
+    const response = await api.post(`/games/${roomId}/claim-win`, { winPattern });
+    return response.data;
+  },
+
   async getUserGameHistory() {
     const response = await api.get('/games/history/user');
     return response.data;

@@ -9,8 +9,12 @@ const gameSchema = new mongoose.Schema({
   },
   moneyLevel: {
     type: Number,
-    required: true,
-    enum: [10, 20, 30, 40, 50, 100]
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['waiting', 'playing', 'finished'],
+    default: 'waiting'
   },
   players: [{
     userId: {
@@ -26,39 +30,51 @@ const gameSchema = new mongoose.Schema({
       type: String,
       required: true
     },
+    cartelaNumber: {
+      type: Number,
+      required: true
+    },
     card: {
       type: [[Number]],
       required: true
     },
-    markedNumbers: {
-      type: [Number],
-      default: []
-    },
+    markedNumbers: [{
+      type: Number
+    }],
     hasWon: {
       type: Boolean,
       default: false
+    },
+    winPattern: {
+      type: String,
+      enum: ['row', 'column', 'diagonal', 'corners'],
+      default: null
+    },
+    hasClaimedWin: {
+      type: Boolean,
+      default: false
+    },
+    hasJoined: {
+      type: Boolean,
+      default: false
+    },
+    joinedAt: {
+      type: Date,
+      default: Date.now
     }
   }],
-  status: {
-    type: String,
-    enum: ['waiting', 'playing', 'finished'],
-    default: 'waiting'
-  },
-  minPlayers: {
-    type: Number,
-    default: 2
-  },
-  maxPlayers: {
-    type: Number,
-    default: 100
-  },
-  calledNumbers: {
-    type: [Number],
-    default: []
-  },
+  calledNumbers: [{
+    type: Number
+  }],
   currentNumber: {
     type: Number,
     default: null
+  },
+  startedAt: {
+    type: Date
+  },
+  finishedAt: {
+    type: Date
   },
   winner: {
     userId: {
@@ -69,17 +85,43 @@ const gameSchema = new mongoose.Schema({
     firstName: String,
     prizeMoney: Number
   },
-  startedAt: {
-    type: Date,
-    default: null
+  winners: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    telegramId: String,
+    firstName: String,
+    prizeMoney: Number,
+    winPattern: String
+  }],
+  minPlayers: {
+    type: Number,
+    default: 2
   },
-  finishedAt: {
-    type: Date,
-    default: null
+  maxPlayers: {
+    type: Number,
+    default: 10
+  },
+  gameDuration: {
+    numbersToCall: Number,
+    delayPerNumber: Number,
+    estimatedDuration: Number
+  },
+  gameStartTime: {
+    type: Date
+  },
+  maxGameTime: {
+    type: Number,
+    default: 120000 // 2 minutes in milliseconds
   }
 }, {
   timestamps: true
 });
 
-const Game = mongoose.model('Game', gameSchema);
-export default Game;
+// Index for efficient queries
+gameSchema.index({ roomId: 1 });
+gameSchema.index({ status: 1 });
+gameSchema.index({ 'players.telegramId': 1 });
+
+export default mongoose.model('Game', gameSchema);
