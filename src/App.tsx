@@ -1,13 +1,13 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
-import { SocketProvider } from './contexts/SocketContext';
-import HomePage from './pages/HomePage';
-import GamePage from './pages/GamePage';
-import WalletPage from './pages/WalletPage';
-import LeaderboardPage from './pages/LeaderboardPage';
-import HistoryPage from './pages/HistoryPage';
-import Layout from './components/Layout';
+import React from "react";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./contexts/AuthContext";
+import { SocketProvider } from "./contexts/SocketContext";
+import HomePage from "./pages/HomePage";
+import GamePage from "./pages/GamePage";
+import WalletPage from "./pages/WalletPage";
+import LeaderboardPage from "./pages/LeaderboardPage";
+import HistoryPage from "./pages/HistoryPage";
+import Layout from "./components/Layout";
 
 function App() {
   return (
