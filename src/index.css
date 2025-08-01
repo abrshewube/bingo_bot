@@ -35,30 +35,71 @@
   }
 
   .ball-container {
-    @apply relative w-24 h-24 mx-auto mb-4;
+    @apply relative w-32 h-32 mx-auto mb-4;
   }
 
   .ball {
-    @apply w-full h-full rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-2xl;
+    @apply w-full h-full rounded-full flex items-center justify-center text-white shadow-2xl relative overflow-hidden;
     background: radial-gradient(circle at 30% 30%, #ff6b6b, #ee5a52, #dc4343);
+    border: 3px solid #fff;
   }
 
-  .ball-animation {
-    animation: rollBall 2s ease-in-out;
+  .ball-wrapper {
+    @apply w-full h-full;
   }
 
-  @keyframes rollBall {
+  .ball-wrapper.enter {
+    animation: ballEnter 1s ease-out;
+  }
+
+  .ball-wrapper.display {
+    animation: ballPulse 2s ease-in-out;
+  }
+
+  .ball-wrapper.exit {
+    animation: ballExit 1s ease-in;
+  }
+
+  .ball-content {
+    @apply flex flex-col items-center justify-center h-full;
+  }
+
+  .ball-letter {
+    @apply text-lg font-bold opacity-80;
+  }
+
+  .ball-number {
+    @apply text-2xl font-black;
+  }
+
+  @keyframes ballEnter {
     0% {
-      transform: translateX(-100px) rotate(0deg);
+      transform: translateX(-200px) rotate(-180deg) scale(0.5);
       opacity: 0;
     }
+    100% {
+      transform: translateX(0) rotate(0deg) scale(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes ballPulse {
+    0%, 100% {
+      transform: scale(1);
+    }
     50% {
-      transform: translateX(0) rotate(180deg);
+      transform: scale(1.1);
+    }
+  }
+
+  @keyframes ballExit {
+    0% {
+      transform: scale(1) rotate(0deg);
       opacity: 1;
     }
     100% {
-      transform: translateX(0) rotate(360deg);
-      opacity: 1;
+      transform: scale(0.3) rotate(180deg);
+      opacity: 0;
     }
   }
 

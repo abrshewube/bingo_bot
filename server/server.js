@@ -37,7 +37,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.WEBAPP_URL || "http://localhost:5173",
+    origin: "http://localhost:5173",
     methods: ["GET", "POST"]
   }
 });
@@ -96,8 +96,8 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.firstName} (${socket.telegramId})`);
 
-  // Join game room
-  socket.on('joinGame', async (data) => {
+  // Create new game
+  socket.on('createGame', async (data) => {
     try {
       const { moneyLevel } = data;
       
@@ -108,22 +108,41 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Find available game or create new one
-      let game = await gameService.getAvailableGames();
-      game = game.find(g => g.moneyLevel === moneyLevel);
-      
-      if (!game) {
-        game = await gameService.createGame(moneyLevel);
-      }
-
-      // Join the game
-      await gameService.joinGame(game.roomId, socket.telegramId);
+      // Create new game and add creator as first player
+      const game = await gameService.createGame(moneyLevel, socket.telegramId);
       socket.join(game.roomId);
       socket.currentRoom = game.roomId;
 
-      socket.emit('gameJoined', {
+      socket.emit('gameCreated', {
         roomId: game.roomId,
         moneyLevel: game.moneyLevel
+      });
+
+    } catch (error) {
+      console.error('Create game error:', error);
+      socket.emit('error', { message: error.message });
+    }
+  });
+
+  // Join existing game
+  socket.on('joinGame', async (data) => {
+    try {
+      const { roomId } = data;
+      
+      // Check if user is registered
+      const user = await User.findOne({ telegramId: socket.telegramId });
+      if (!user || !user.isRegistered) {
+        socket.emit('error', { message: 'Please complete registration first' });
+        return;
+      }
+
+      // Join the game
+      await gameService.joinGame(roomId, socket.telegramId);
+      socket.join(roomId);
+      socket.currentRoom = roomId;
+
+      socket.emit('gameJoined', {
+        roomId: roomId
       });
 
     } catch (error) {
@@ -132,55 +151,35 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Start game for a money level
-  socket.on('startGame', async (data, callback) => {
-    try {
-      console.log('[SOCKET] startGame event received:', data, 'from', socket.telegramId);
-      const { moneyLevel } = data;
-      // Check if user is registered
-      const user = await User.findOne({ telegramId: socket.telegramId });
-      if (!user || !user.isRegistered) {
-        console.log('[SOCKET] startGame: user not registered:', socket.telegramId);
-        callback({ error: 'Please complete registration first' });
-        return;
-      }
-      // Check if a game already exists for this money level
-      let game = await gameService.getAvailableGames();
-      game = game.find(g => g.moneyLevel === moneyLevel);
-      if (game) {
-        console.log('[SOCKET] startGame: game already exists for moneyLevel', moneyLevel);
-        callback({ error: 'Game already exists for this money level' });
-        return;
-      }
-      // Create the game
-      game = await gameService.createGame(moneyLevel);
-      console.log('[SOCKET] startGame: created game', game.roomId);
-      // Add the user as the first player
-      await gameService.joinGame(game.roomId, socket.telegramId);
-      console.log('[SOCKET] startGame: user joined game', game.roomId);
-      socket.join(game.roomId);
-      socket.currentRoom = game.roomId;
-      // Respond with the new roomId
-      callback({ roomId: game.roomId });
-      // Notify all clients about the new game/player count
-      io.emit('gameListUpdated');
-      console.log('[SOCKET] startGame: emitted gameListUpdated');
-    } catch (error) {
-      console.error('[SOCKET] startGame error:', error);
-      callback({ error: error.message });
-    }
-  });
-
-  // Join specific room
+  // Join room for spectating or rejoining
   socket.on('joinRoom', async (data) => {
     try {
       const { roomId } = data;
       
-      await gameService.joinGame(roomId, socket.telegramId);
+      console.log(`User ${socket.firstName} joining room ${roomId}`);
       socket.join(roomId);
       socket.currentRoom = roomId;
 
-      socket.emit('roomJoined', { roomId });
+      // Get current game state and send it to the user
+      const game = await gameService.getGameByRoomId(roomId);
+      if (game) {
+        socket.emit('roomJoined', { 
+          roomId,
+          gameState: {
+            status: game.status,
+            playerCount: game.players.length,
+            minPlayers: game.minPlayers,
+            maxPlayers: game.maxPlayers,
+            totalPot: game.moneyLevel * game.players.length,
+            players: game.players.map(p => ({
+              telegramId: p.telegramId,
+              firstName: p.firstName
+            }))
+          }
+        });
+      } else {
+        socket.emit('roomJoined', { roomId });
+      }
     } catch (error) {
       console.error('Join room error:', error);
       socket.emit('error', { message: error.message });

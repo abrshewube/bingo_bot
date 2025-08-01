@@ -46,7 +46,7 @@ const gameSchema = new mongoose.Schema({
   },
   minPlayers: {
     type: Number,
-    default: 10
+    default: 2
   },
   maxPlayers: {
     type: Number,

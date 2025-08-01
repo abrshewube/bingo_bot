@@ -19,7 +19,9 @@ interface GameData {
   userCard: number[][] | null;
   userMarkedNumbers: number[];
   winner: any;
+  winners?: any[];
   players: any[];
+  totalPot: number;
 }
 
 const GamePage: React.FC = () => {
@@ -31,6 +33,7 @@ const GamePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [currentBallNumber, setCurrentBallNumber] = useState<number | null>(null);
 
   useEffect(() => {
     if (roomId) {
@@ -43,7 +46,7 @@ const GamePage: React.FC = () => {
     if (socket) {
       socket.on('roomJoined', handleRoomJoined);
       socket.on('playerJoined', handlePlayerJoined);
-      socket.on('gameStarting', handleGameStarting);
+      socket.on('gameCountdown', handleGameCountdown);
       socket.on('gameStarted', handleGameStarted);
       socket.on('numberCalled', handleNumberCalled);
       socket.on('numberMarked', handleNumberMarked);
@@ -53,7 +56,7 @@ const GamePage: React.FC = () => {
       return () => {
         socket.off('roomJoined');
         socket.off('playerJoined');
-        socket.off('gameStarting');
+        socket.off('gameCountdown');
         socket.off('gameStarted');
         socket.off('numberCalled');
         socket.off('numberMarked');
@@ -79,63 +82,71 @@ const GamePage: React.FC = () => {
 
   const joinRoom = () => {
     if (socket && roomId) {
+      console.log('Joining room:', roomId);
       socket.emit('joinRoom', { roomId });
     }
   };
 
   const handleRoomJoined = (data: any) => {
     console.log('Joined room:', data.roomId);
+    if (data.gameState) {
+      console.log('Received game state:', data.gameState);
+      setGameData(prev => prev ? {
+        ...prev,
+        ...data.gameState
+      } : null);
+    }
   };
 
   const handlePlayerJoined = (data: any) => {
+    console.log('Player joined:', data);
     setGameData(prev => prev ? {
       ...prev,
       playerCount: data.playerCount,
-      players: data.players
+      players: data.players,
+      totalPot: data.totalPot
     } : null);
   };
 
-  const handleGameStarting = (data: any) => {
+  const handleGameCountdown = (data: any) => {
+    console.log('Game countdown received:', data);
     setCountdown(data.countdown);
-    
-    const timer = setInterval(() => {
-      setCountdown(prev => {
-        if (prev && prev > 1) {
-          return prev - 1;
-        } else {
-          clearInterval(timer);
-          return null;
-        }
-      });
-    }, 1000);
   };
 
   const handleGameStarted = (data: any) => {
+    console.log('Game started:', data);
     setGameData(prev => prev ? {
       ...prev,
       status: 'playing',
-      calledNumbers: data.calledNumbers
+      calledNumbers: data.calledNumbers,
+      totalPot: data.totalPot
     } : null);
     setCountdown(null);
   };
 
   const handleNumberCalled = (data: any) => {
+    setCurrentBallNumber(data.number);
     setIsAnimating(true);
-    setGameData(prev => prev ? {
-      ...prev,
-      currentNumber: data.number,
-      calledNumbers: data.calledNumbers
-    } : null);
-
+    
     // Play number announcement (text-to-speech)
     if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(`${data.number}`);
+      const letter = getBallLetter(data.number);
+      const utterance = new SpeechSynthesisUtterance(`${letter} ${data.number}`);
       utterance.rate = 0.8;
       utterance.pitch = 1.2;
+      utterance.volume = 0.8;
       speechSynthesis.speak(utterance);
     }
+  };
 
-    setTimeout(() => setIsAnimating(false), 2000);
+  const handleBallAnimationComplete = () => {
+    setIsAnimating(false);
+    setGameData(prev => prev ? {
+      ...prev,
+      currentNumber: currentBallNumber,
+      calledNumbers: [...prev.calledNumbers, currentBallNumber!].filter((n, i, arr) => arr.indexOf(n) === i)
+    } : null);
+    setCurrentBallNumber(null);
   };
 
   const handleNumberMarked = (data: any) => {
@@ -146,14 +157,24 @@ const GamePage: React.FC = () => {
     setGameData(prev => prev ? {
       ...prev,
       status: 'finished',
-      winner: data.winner
+      winner: data.winners?.[0] || data.winner,
+      winners: data.winners
     } : null);
 
     // Show winner announcement
     setTimeout(() => {
-      alert(data.message);
+      if (data.winners && data.winners.length > 0) {
+        const isWinner = data.winners.some((w: any) => w.telegramId === user?.telegramId);
+        if (isWinner) {
+          alert(`🎉 Congratulations! You won ${data.winners.find((w: any) => w.telegramId === user?.telegramId)?.prizeMoney} Birr!`);
+        } else {
+          alert(data.message);
+        }
+      } else {
+        alert(data.message);
+      }
       navigate('/');
-    }, 3000);
+    }, 5000);
   };
 
   const handleError = (error: any) => {
@@ -161,15 +182,24 @@ const GamePage: React.FC = () => {
   };
 
   const handleNumberClick = (number: number) => {
-    if (socket && roomId && gameData?.status === 'playing') {
+    if (socket && roomId && gameData?.status === 'playing' && gameData.calledNumbers.includes(number)) {
       socket.emit('markNumber', { roomId, number });
       
       // Optimistically update UI
       setGameData(prev => prev ? {
         ...prev,
-        userMarkedNumbers: [...prev.userMarkedNumbers, number]
+        userMarkedNumbers: [...prev.userMarkedNumbers, number].filter((n, i, arr) => arr.indexOf(n) === i)
       } : null);
     }
+  };
+
+  const getBallLetter = (number: number) => {
+    if (number >= 1 && number <= 15) return 'B';
+    if (number >= 16 && number <= 30) return 'I';
+    if (number >= 31 && number <= 45) return 'N';
+    if (number >= 46 && number <= 60) return 'G';
+    if (number >= 61 && number <= 75) return 'O';
+    return '';
   };
 
   if (loading) {
@@ -226,7 +256,7 @@ const GamePage: React.FC = () => {
           <div>
             <Trophy className="mx-auto mb-1 text-yellow-400" size={20} />
             <p className="text-white font-bold">
-              {Math.floor(gameData.moneyLevel * gameData.playerCount * 0.8)}
+              {Math.floor(gameData.totalPot * 0.8)}
             </p>
             <p className="text-white/60 text-xs">Prize Pool</p>
           </div>
@@ -242,12 +272,15 @@ const GamePage: React.FC = () => {
       </div>
 
       {/* Countdown */}
-      {countdown && (
+      {countdown && countdown > 0 && (
         <div className="glass-card p-6 rounded-xl text-center">
           <h2 className="text-2xl font-bold text-white mb-2">Game Starting In</h2>
           <div className="text-6xl font-bold text-yellow-400 animate-pulse">
-            {countdown}
+            {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}
           </div>
+          <p className="text-white/80 mt-2">
+            Waiting for more players... ({gameData.playerCount}/{gameData.minPlayers} minimum)
+          </p>
         </div>
       )}
 
@@ -256,8 +289,9 @@ const GamePage: React.FC = () => {
         <div className="glass-card p-6 rounded-xl text-center">
           <h3 className="text-lg font-bold text-white mb-4">Current Number</h3>
           <BallDisplay 
-            currentNumber={gameData.currentNumber} 
+            currentNumber={currentBallNumber || gameData.currentNumber} 
             isAnimating={isAnimating}
+            onAnimationComplete={handleBallAnimationComplete}
           />
           <p className="text-white/80 text-sm mt-2">
             Numbers Called: {gameData.calledNumbers.length}
@@ -274,6 +308,15 @@ const GamePage: React.FC = () => {
             onNumberClick={handleNumberClick}
             calledNumbers={gameData.calledNumbers}
           />
+        </div>
+      )}
+
+      {/* Game Instructions */}
+      {gameData.status === 'waiting' && gameData.userCard && (
+        <div className="glass-card p-4 rounded-xl text-center">
+          <p className="text-white/80">
+            Your bingo card is ready! The game will start when we have enough players.
+          </p>
         </div>
       )}
 
@@ -295,12 +338,22 @@ const GamePage: React.FC = () => {
       )}
 
       {/* Winner Announcement */}
-      {gameData.winner && (
+      {(gameData.winners || gameData.winner) && (
         <div className="glass-card p-6 rounded-xl text-center border-2 border-yellow-400">
-          <h2 className="text-2xl font-bold text-yellow-400 mb-2">🎉 Winner!</h2>
-          <p className="text-white text-lg">
-            {gameData.winner.firstName} wins {gameData.winner.prizeMoney} Birr!
-          </p>
+          <h2 className="text-2xl font-bold text-yellow-400 mb-2">🎉 Winner{gameData.winners && gameData.winners.length > 1 ? 's' : ''}!</h2>
+          {gameData.winners ? (
+            <div className="space-y-2">
+              {gameData.winners.map((winner: any, index: number) => (
+                <p key={index} className="text-white text-lg">
+                  {winner.firstName} wins {winner.prizeMoney} Birr!
+                </p>
+              ))}
+            </div>
+          ) : gameData.winner && (
+            <p className="text-white text-lg">
+              {gameData.winner.firstName} wins {gameData.winner.prizeMoney} Birr!
+            </p>
+          )}
         </div>
       )}
     </div>

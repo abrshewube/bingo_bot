@@ -1,33 +1,44 @@
-// const express = require('express');
-// const Game = require('../models/Game');
-// const { authenticateToken } = require('../middleware/auth');
 import express from 'express';
 import Game from '../models/Game.js';
+import GameResult from '../models/GameResult.js';
 import { authenticateToken } from '../middleware/auth.js';
-
 
 const router = express.Router();
 
-// Get available games
+// Get available games grouped by money level
 router.get('/available', authenticateToken, async (req, res) => {
   try {
-    const games = await Game.find({ status: 'waiting' })
-      .select('roomId moneyLevel players.firstName createdAt')
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const GameService = req.app.get('gameService');
+    const gamesByLevel = await GameService.getGamesByMoneyLevel();
     
-    const formattedGames = games.map(game => ({
-      roomId: game.roomId,
-      moneyLevel: game.moneyLevel,
-      playerCount: game.players.length,
-      maxPlayers: 10,
-      createdAt: game.createdAt
-    }));
-    
-    res.json(formattedGames);
+    res.json(gamesByLevel);
   } catch (error) {
     console.error('Get available games error:', error);
     res.status(500).json({ error: 'Failed to fetch games' });
+  }
+});
+
+// Create new game
+router.post('/create', authenticateToken, async (req, res) => {
+  try {
+    const { moneyLevel } = req.body;
+    const GameService = req.app.get('gameService');
+    
+    if (![10, 20, 30, 40, 50, 100].includes(moneyLevel)) {
+      return res.status(400).json({ error: 'Invalid money level' });
+    }
+
+    const game = await GameService.createGame(moneyLevel, req.user.telegramId);
+    
+    res.json({
+      roomId: game.roomId,
+      moneyLevel: game.moneyLevel,
+      status: game.status,
+      playerCount: game.players.length
+    });
+  } catch (error) {
+    console.error('Create game error:', error);
+    res.status(500).json({ error: 'Failed to create game' });
   }
 });
 
@@ -52,6 +63,7 @@ router.get('/:roomId', authenticateToken, async (req, res) => {
       maxPlayers: game.maxPlayers,
       calledNumbers: game.calledNumbers,
       currentNumber: game.currentNumber,
+      totalPot: game.moneyLevel * game.players.length,
       players: game.players.map(p => ({
         telegramId: p.telegramId,
         firstName: p.firstName,
@@ -69,6 +81,19 @@ router.get('/:roomId', authenticateToken, async (req, res) => {
   }
 });
 
+// Get user's game history
+router.get('/history/user', authenticateToken, async (req, res) => {
+  try {
+    const GameService = req.app.get('gameService');
+    const history = await GameService.getUserGameHistory(req.user.telegramId);
+    
+    res.json(history);
+  } catch (error) {
+    console.error('Get game history error:', error);
+    res.status(500).json({ error: 'Failed to fetch game history' });
+  }
+});
+
 // Get leaderboard
 router.get('/leaderboard/:period', async (req, res) => {
   try {
@@ -82,6 +107,5 @@ router.get('/leaderboard/:period', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch leaderboard' });
   }
 });
-
 
 export default router;

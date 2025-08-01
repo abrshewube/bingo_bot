@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema({
   },
   gamesWon: {
     type: Number,
-    default: 0
+    default: 0 
   },
   totalWinnings: {
     type: Number,

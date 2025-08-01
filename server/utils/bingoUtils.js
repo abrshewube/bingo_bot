@@ -34,7 +34,8 @@ function generateBingoCard() {
 
 function checkBingo(card, markedNumbers) {
   const marked = new Set(markedNumbers);
-  marked.add(0); // FREE space is always marked
+  marked.add(0); 
+  // FREE space is always marked
 
   // Check rows
   for (let row = 0; row < 5; row++) {

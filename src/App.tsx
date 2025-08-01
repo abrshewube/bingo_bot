@@ -8,6 +8,7 @@ import WalletPage from './pages/WalletPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import HistoryPage from './pages/HistoryPage';
 import Layout from './components/Layout';
+import DevelopmentLoginForm from './components/DevelopmentLogin';
 
 function App() {
   return (
@@ -16,11 +17,13 @@ function App() {
         <Router>
           <Layout>
             <Routes>
+              <Route path="/dev-login" element={<DevelopmentLoginForm />} />
               <Route path="/" element={<HomePage />} />
               <Route path="/game/:roomId" element={<GamePage />} />
               <Route path="/wallet" element={<WalletPage />} />
               <Route path="/leaderboard" element={<LeaderboardPage />} />
               <Route path="/history" element={<HistoryPage />} />
+
             </Routes>
           </Layout>
         </Router>
