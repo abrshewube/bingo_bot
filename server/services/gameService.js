@@ -62,6 +62,10 @@ class GameService {
   }
 
   async joinGame(roomId, telegramId) {
+    return this.joinGame(roomId, telegramId, null, null);
+  }
+
+  async joinGameWithCartela(roomId, telegramId, cartelaNumber, card) {
     const user = await User.findOne({ telegramId });
     if (!user || !user.isRegistered) {
       throw new Error('User not registered');
@@ -98,12 +102,13 @@ class GameService {
     user.walletBalance -= game.moneyLevel;
     await user.save();
 
-    const card = generateBingoCard();
+    const bingoCard = card || generateBingoCard();
     game.players.push({
       userId: user._id,
       telegramId: user.telegramId,
       firstName: user.firstName,
-      card,
+      card: bingoCard,
+      cartelaNumber: cartelaNumber || Math.floor(Math.random() * 100) + 1,
       markedNumbers: [],
       hasWon: false
     });
@@ -137,8 +142,41 @@ class GameService {
     return game;
   }
 
+  async leaveGame(roomId, telegramId) {
+    const game = await Game.findOne({ roomId });
+    if (!game) {
+      throw new Error('Game not found');
+    }
+
+    if (game.status === 'playing') {
+      throw new Error('Cannot leave game after it has started');
+    }
+
+    const playerIndex = game.players.findIndex(p => p.telegramId === telegramId);
+    if (playerIndex === -1) {
+      throw new Error('Player not in this game');
+    }
+
+    // Remove player and refund entry fee
+    const player = game.players[playerIndex];
+    game.players.splice(playerIndex, 1);
+    await game.save();
+
+    // Refund entry fee
+    await User.findByIdAndUpdate(player.userId, {
+      $inc: { walletBalance: game.moneyLevel }
+    });
+
+    // If no players left, delete the game
+    if (game.players.length === 0) {
+      await Game.findByIdAndDelete(game._id);
+    }
+
+    return game;
+  }
+
   scheduleGameStart(roomId) {
-    let countdown = 60; // 1 minute
+    let countdown = 30; // 30 seconds for faster testing
     
     // Clear any existing timer
     this.clearGameTimer(roomId);
@@ -217,11 +255,35 @@ class GameService {
   }
 
   startNumberCalling(roomId) {
+    let numbersDrawn = 0;
+    const maxNumbers = Math.floor(Math.random() * 16) + 25; // 25-40 numbers
+    const gameStartTime = Date.now();
+    const maxGameTime = 120000; // 2 minutes
+    
     const interval = setInterval(async () => {
       const game = await Game.findOne({ roomId });
       if (!game || game.status !== 'playing') {
         clearInterval(interval);
         this.numberCallingIntervals.delete(roomId);
+        return;
+      }
+      
+      numbersDrawn++;
+      const gameElapsed = Date.now() - gameStartTime;
+      
+      // Force end game after 2 minutes or max numbers
+      if (gameElapsed >= maxGameTime || numbersDrawn >= maxNumbers) {
+        clearInterval(interval);
+        this.numberCallingIntervals.delete(roomId);
+        
+        // Force at least one winner if no winners yet
+        const winners = await this.checkForWinners(game);
+        if (winners.length === 0) {
+          const forcedWinners = await this.forceWinners(game);
+          await this.endGame(roomId, forcedWinners);
+        } else {
+          await this.endGame(roomId, winners);
+        }
         return;
       }
 
@@ -260,44 +322,81 @@ class GameService {
         await this.endGame(roomId, winners);
       }
 
-    }, 4000); // Call number every 4 seconds
+    }, 2000); // Call number every 2 seconds
 
     this.numberCallingIntervals.set(roomId, interval);
+  }
+
+  async forceWinners(game) {
+    const winners = [];
+    const numWinners = Math.min(3, Math.floor(Math.random() * 3) + 1); // 1-3 winners
+    const shuffledPlayers = [...game.players].sort(() => Math.random() - 0.5);
+    
+    for (let i = 0; i < numWinners && i < shuffledPlayers.length; i++) {
+      const player = shuffledPlayers[i];
+      
+      // Force a winning pattern by marking strategic numbers
+      const missingForWin = this.findMissingNumbersForWin(player.card, player.markedNumbers, game.calledNumbers);
+      if (missingForWin.length > 0) {
+        player.markedNumbers.push(...missingForWin);
+        winners.push(player);
+      }
+    }
+    
+    if (winners.length > 0) {
+      await game.save();
+    }
+    
+    return winners;
   }
 
   async checkForWinners(game) {
     const winners = [];
     
     for (const player of game.players) {
-      if (checkBingo(player.card, player.markedNumbers)) {
+      if (this.checkBingoPattern(player.card, player.markedNumbers)) {
         winners.push(player);
       }
     }
 
-    // Smart algorithm to ensure at least 1 winner after reasonable number of calls
-    if (winners.length === 0 && game.calledNumbers.length >= 45) {
-      // Force a win for 1-3 random players by marking strategic numbers
-      const numWinners = Math.floor(Math.random() * 3) + 1; // 1-3 winners
-      const shuffledPlayers = [...game.players].sort(() => Math.random() - 0.5);
-      
-      for (let i = 0; i < Math.min(numWinners, shuffledPlayers.length); i++) {
-        const player = shuffledPlayers[i];
-        
-        // Find a winning pattern and mark the missing numbers
-        const missingForWin = this.findMissingNumbersForWin(player.card, player.markedNumbers, game.calledNumbers);
-        if (missingForWin.length > 0) {
-          // Mark the missing numbers to create a win
-          player.markedNumbers.push(...missingForWin);
-          winners.push(player);
-        }
-      }
-      
-      if (winners.length > 0) {
-        await game.save();
-      }
-    }
-
     return winners;
+  }
+
+  checkBingoPattern(card, markedNumbers) {
+    const marked = new Set([...markedNumbers, 0]); // Include FREE space
+    
+    // Check rows
+    for (let row = 0; row < 5; row++) {
+      let count = 0;
+      for (let col = 0; col < 5; col++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      if (count === 5) return true;
+    }
+    
+    // Check columns
+    for (let col = 0; col < 5; col++) {
+      let count = 0;
+      for (let row = 0; row < 5; row++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      if (count === 5) return true;
+    }
+    
+    // Check diagonals
+    let diagonal1 = 0, diagonal2 = 0;
+    for (let i = 0; i < 5; i++) {
+      if (marked.has(card[i][i])) diagonal1++;
+      if (marked.has(card[i][4-i])) diagonal2++;
+    }
+    if (diagonal1 === 5 || diagonal2 === 5) return true;
+    
+    // Check four corners
+    const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
+    const markedCorners = corners.filter(corner => marked.has(corner)).length;
+    if (markedCorners === 4) return true;
+    
+    return false;
   }
 
   findMissingNumbersForWin(card, markedNumbers, calledNumbers) {
@@ -329,6 +428,40 @@ class GameService {
     return [];
   }
 
+  async validateBingo(roomId, telegramId, markedNumbers) {
+    const game = await Game.findOne({ roomId, status: 'playing' });
+    if (!game) {
+      throw new Error('Game not found or not in progress');
+    }
+
+    const player = game.players.find(p => p.telegramId === telegramId);
+    if (!player) {
+      throw new Error('Player not in this game');
+    }
+
+    // Verify all marked numbers were actually called
+    const invalidNumbers = markedNumbers.filter(num => 
+      num !== 0 && !game.calledNumbers.includes(num)
+    );
+    
+    if (invalidNumbers.length > 0) {
+      throw new Error(`Invalid numbers marked: ${invalidNumbers.join(', ')}`);
+    }
+
+    // Check if the pattern is valid
+    const isValidBingo = this.checkBingoPattern(player.card, markedNumbers);
+    if (!isValidBingo) {
+      throw new Error('No valid bingo pattern found');
+    }
+
+    // Update player's marked numbers and win status
+    player.markedNumbers = markedNumbers;
+    player.hasWon = true;
+    await game.save();
+
+    return true;
+  }
+
   async markNumber(roomId, telegramId, number) {
     const game = await Game.findOne({ roomId, status: 'playing' });
     if (!game) {
@@ -353,19 +486,6 @@ class GameService {
     if (!player.markedNumbers.includes(number)) {
       player.markedNumbers.push(number);
       await game.save();
-     // Check for bingo
-      if (checkBingo(player.card, player.markedNumbers)) {
-        player.hasWon = true;
-        await game.save();
-        // End game immediately when someone wins
-        this.clearGameTimer(roomId);
-        if (this.numberCallingIntervals.has(roomId)) {
-          clearInterval(this.numberCallingIntervals.get(roomId));
-          this.numberCallingIntervals.delete(roomId);
-        }
-        
-        await this.endGame(roomId, [player]);
-      }
     }
     return game;
   }

@@ -26,6 +26,10 @@ const gameSchema = new mongoose.Schema({
       type: String,
       required: true
     },
+    cartelaNumber: {
+      type: Number,
+      default: null
+    },
     card: {
       type: [[Number]],
       required: true
