@@ -12,18 +12,16 @@ class GameService {
 
   async createGame(moneyLevel, creatorTelegramId) {
     const roomId = generateRoomId();
-    
+
     // Get creator user
     const creator = await User.findOne({ telegramId: creatorTelegramId });
     if (!creator || !creator.isRegistered) {
       throw new Error('Creator not registered');
     }
-
     // Check if creator has enough balance
     if (creator.walletBalance < moneyLevel) {
       throw new Error('Insufficient balance');
     }
-
     // Deduct entry fee from creator's wallet
     creator.walletBalance -= moneyLevel;
     await creator.save();
@@ -44,7 +42,7 @@ class GameService {
       status: 'waiting',
       takenCartelas: [] // Track taken cartela numbers
     });
-    
+
     await game.save();
 
     // Notify all players in the room about the new player
@@ -73,7 +71,6 @@ class GameService {
     if (!user || !user.isRegistered) {
       throw new Error('User not registered');
     }
-
     // Check if user has enough balance
     if (user.walletBalance < 0) {
       throw new Error('Insufficient balance');
@@ -104,21 +101,21 @@ class GameService {
         if (game.takenCartelas.includes(cartelaNumber) && existingPlayer.cartelaNumber !== cartelaNumber) {
           throw new Error(`Cartela number ${cartelaNumber} is already taken`);
         }
-        
+
         // Remove old cartela from taken list if it exists
         if (existingPlayer.cartelaNumber) {
           game.takenCartelas = game.takenCartelas.filter(num => num !== existingPlayer.cartelaNumber);
         }
-        
+
         // Update player's cartela and card
         existingPlayer.cartelaNumber = cartelaNumber;
         existingPlayer.card = card;
-        
+
         // Add new cartela to taken list
         game.takenCartelas.push(cartelaNumber);
-        
+
         await game.save();
-        
+
         // Notify all players about the update
         this.io.to(roomId).emit('playerJoined', {
           roomId: roomId,
@@ -161,7 +158,7 @@ class GameService {
     };
 
     game.players.push(newPlayer);
-    
+
     // Add cartela number to taken list if provided
     if (cartelaNumber) {
       game.takenCartelas.push(cartelaNumber);
@@ -212,15 +209,14 @@ class GameService {
       throw new Error('Player not in this game');
     }
 
-    // Remove player and refund entry fee
-      const { roomId, cartelaNumber, card, previousCartela } = data;
+    const player = game.players[playerIndex];
     game.players.splice(playerIndex, 1);
-    
+
     // Remove cartela number from taken list if it was set
     if (player.cartelaNumber) {
       game.takenCartelas = game.takenCartelas.filter(num => num !== player.cartelaNumber);
     }
-    
+
     await game.save();
 
     // Refund entry fee
@@ -229,49 +225,34 @@ class GameService {
     });
 
     // If no players left, delete the game
-      // Free up previous cartela if user had one
-      if (previousCartela && game.takenCartelas.includes(previousCartela)) {
-        const existingPlayer = game.players.find(p => p.telegramId === socket.telegramId);
-        if (existingPlayer && existingPlayer.cartelaNumber === previousCartela) {
-          game.takenCartelas = game.takenCartelas.filter(num => num !== previousCartela);
-        }
-      }
-
-      // Check if new cartela is already taken by someone else
-      if (game.takenCartelas.includes(cartelaNumber)) {
-        socket.emit('error', { message: `Cartela number ${cartelaNumber} is already taken` });
-        return;
-        minPlayers: game.minPlayers,
-        maxPlayers: game.maxPlayers,
-      // Add new cartela to taken list temporarily
-      game.takenCartelas.push(cartelaNumber);
-      await game.save();
-
-      // Notify all players about cartela selection
-      socket.to(roomId).emit('cartelaSelected', {
-        roomId: roomId,
-        cartelaNumber: cartelaNumber,
-        takenCartelas: game.takenCartelas,
-        playerName: socket.firstName
-      });
-      
-          telegramId: p.telegramId,
-          firstName: p.firstName
-        })),
-        takenCartelas: game.takenCartelas,
-        message: `Cartela ${cartelaNumber} selected successfully`
-      });
+    if (game.players.length === 0) {
+      await Game.findByIdAndDelete(game._id);
+      return;
     }
+
+    // Notify all players
+    this.io.to(roomId).emit('playerLeft', {
+      roomId: roomId,
+      playerCount: game.players.length,
+      minPlayers: game.minPlayers,
+      maxPlayers: game.maxPlayers,
+      totalPot: game.moneyLevel * game.players.length,
+      players: game.players.map(p => ({
+        telegramId: p.telegramId,
+        firstName: p.firstName
+      })),
+      takenCartelas: game.takenCartelas
+    });
 
     return game;
   }
 
   scheduleGameStart(roomId) {
     let countdown = 30; // 30 seconds for faster testing
-    
+
     // Clear any existing timer
     this.clearGameTimer(roomId);
-    
+
     const countdownInterval = setInterval(() => {
       countdown--;
       console.log(`Countdown for room ${roomId}: ${countdown}s`);
@@ -289,7 +270,7 @@ class GameService {
     }, 1000);
 
     this.gameTimers.set(roomId, countdownInterval);
-    
+
     console.log(`Emitting countdown for room ${roomId}: ${countdown}s`);
     this.io.to(roomId).emit('gameCountdown', {
       roomId: roomId,
@@ -317,12 +298,12 @@ class GameService {
           $inc: { walletBalance: game.moneyLevel }
         });
       }
-      
+
       this.io.to(roomId).emit('gameEnded', {
         message: 'Game cancelled - not enough players. Entry fees refunded.',
         cancelled: true
       });
-      
+
       await Game.findByIdAndDelete(game._id);
       return;
     }
@@ -377,7 +358,7 @@ class GameService {
               }
             }
           }
-          
+
           // If we have winners, end the game
           if (potentialWinners.length > 0) {
             await this.endGame(roomId, potentialWinners);
@@ -388,16 +369,16 @@ class GameService {
         }
 
         // Smart ending: ensure at least one winner
-        const shouldEndGame = Date.now() - startTime >= maxGameTime || 
-                             numbersCalled >= maxNumbers ||
-                             (numbersCalled >= 35 && Math.random() < 0.3); // 30% chance after 35 numbers
+        const shouldEndGame = Date.now() - startTime >= maxGameTime ||
+          numbersCalled >= maxNumbers ||
+          (numbersCalled >= 35 && Math.random() < 0.3); // 30% chance after 35 numbers
 
         if (shouldEndGame) {
           console.log(`Game time elapsed for room ${roomId}, checking for winners...`);
-          
+
           // Smart winner selection - ensure at least 1-2 winners
           const winners = this.selectSmartWinners(game.players);
-          
+
           if (winners.length > 0) {
             // Mark winners
             for (const winner of winners) {
@@ -410,7 +391,7 @@ class GameService {
             const randomWinners = this.selectRandomWinners(game.players, 1);
             await this.endGame(roomId, randomWinners);
           }
-          
+
           clearInterval(interval);
           this.numberCallingIntervals.delete(roomId);
           return;
@@ -431,7 +412,7 @@ class GameService {
         await game.save();
 
         // Emit to all players in the room with enhanced data
-        this.io.to(roomId).emit('numberCalled', { 
+        this.io.to(roomId).emit('numberCalled', {
           number,
           letter: this.getBallLetter(number),
           totalCalled: numbersCalled,
@@ -440,15 +421,14 @@ class GameService {
 
         // Send encouragement messages
         if (numbersCalled === 15) {
-          this.io.to(roomId).emit('gameMessage', { 
-            message: '🔥 Game heating up! Keep marking your numbers!' 
+          this.io.to(roomId).emit('gameMessage', {
+            message: '🔥 Game heating up! Keep marking your numbers!'
           });
         } else if (numbersCalled === 30) {
-          this.io.to(roomId).emit('gameMessage', { 
-            message: '⚡ Getting close! Someone might win soon!' 
+          this.io.to(roomId).emit('gameMessage', {
+            message: '⚡ Getting close! Someone might win soon!'
           });
         }
-
       } catch (error) {
         console.error(`Error in number calling for room ${roomId}:`, error);
         clearInterval(interval);
@@ -467,7 +447,7 @@ class GameService {
     // Calculate progress for each player
     for (const player of players) {
       if (player.hasWon) continue;
-      
+
       const progress = this.calculatePlayerProgress(player.card, player.markedNumbers);
       playerProgress.push({ player, progress });
     }
@@ -477,11 +457,11 @@ class GameService {
 
     // Select 1-2 winners based on progress and some randomness
     const topPlayers = playerProgress.slice(0, 3); // Top 3 players
-    
+
     if (topPlayers.length > 0) {
       // Always include the top player
       winners.push(topPlayers[0].player);
-      
+
       // 40% chance to include second winner if there are multiple top players
       if (topPlayers.length > 1 && Math.random() < 0.4) {
         winners.push(topPlayers[1].player);
@@ -498,83 +478,68 @@ class GameService {
     let colProgress = 0;
     let diagProgress = 0;
     let cornerProgress = 0;
-    
+
     // Check rows
     for (let row = 0; row < 5; row++) {
       let count = 0;
-          for (const player of game.players) {
-            if (!player.hasWon) {
-              const hasBingo = this.checkBingoPattern(player.card, player.markedNumbers);
-              if (hasBingo) {
-                player.hasWon = true;
-                winners.push(player);
-              }
-            }
-          }
-          
-          if (winners.length > 0) {
-            await this.endGame(roomId, winners);
-          } else {
-            // No winners found, end game with no winners
-            await this.endGame(roomId, []);
-          }
-          
-          clearInterval(interval);
-          this.numberCallingIntervals.delete(roomId);
-          return;
-        }
-
-        // Generate a random number that hasn't been called yet
-        let number;
-        do {
-          number = Math.floor(Math.random() * 75) + 1;
-        } while (calledNumbers.includes(number));
-
-        calledNumbers.push(number);
-        numbersCalled++;
-
-        // Update game with new called number
-        game.calledNumbers.push(number);
-        game.currentNumber = number;
-        await game.save();
-
-        // Emit to all players in the room
-        this.io.to(roomId).emit('numberCalled', { number });
-
-        // Check if all numbers have been called
-        if (numbersCalled >= maxNumbers) {
-          console.log(`All numbers called for room ${roomId}, checking for winners...`);
-          
-          // Check all players for bingo patterns
-          const winners = [];
-          for (const player of game.players) {
-            if (!player.hasWon) {
-              const hasBingo = this.checkBingoPattern(player.card, player.markedNumbers);
-              if (hasBingo) {
-                player.hasWon = true;
-                winners.push(player);
-              }
-            }
-          }
-          
-          if (winners.length > 0) {
-            await this.endGame(roomId, winners);
-          } else {
-            // No winners found, end game with no winners
-            await this.endGame(roomId, []);
-          }
-          
-          clearInterval(interval);
-          this.numberCallingIntervals.delete(roomId);
-        }
-      } catch (error) {
-        console.error(`Error in number calling for room ${roomId}:`, error);
-        clearInterval(interval);
-        this.numberCallingIntervals.delete(roomId);
+      for (let col = 0; col < 5; col++) {
+        if (marked.has(card[col][row])) count++;
       }
-    }, 8000); // Call numbers every 8 seconds for better hearing
+      rowProgress = Math.max(rowProgress, count);
+    }
 
-    this.numberCallingIntervals.set(roomId, interval);
+    // Check columns
+    for (let col = 0; col < 5; col++) {
+      let count = 0;
+      for (let row = 0; row < 5; row++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      colProgress = Math.max(colProgress, count);
+    }
+
+    // Check diagonals
+    let diagonal1 = 0, diagonal2 = 0;
+    for (let i = 0; i < 5; i++) {
+      if (marked.has(card[i][i])) diagonal1++;
+      if (marked.has(card[i][4 - i])) diagonal2++;
+    }
+    diagProgress = Math.max(diagonal1, diagonal2);
+
+    // Check corners
+    const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
+    cornerProgress = corners.filter(corner => marked.has(corner)).length;
+
+    return {
+      row: rowProgress,
+      column: colProgress,
+      diagonal: diagProgress,
+      corners: cornerProgress,
+      total: Math.max(rowProgress, colProgress, diagProgress, cornerProgress),
+      markedCount: markedNumbers.length
+    };
+  }
+
+  // Fallback random winner selection
+  selectRandomWinners(players, count = 1) {
+    const availablePlayers = players.filter(p => !p.hasWon);
+    const winners = [];
+
+    for (let i = 0; i < Math.min(count, availablePlayers.length); i++) {
+      const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+      winners.push(availablePlayers.splice(randomIndex, 1)[0]);
+    }
+
+    return winners;
+  }
+
+  // Helper method to get ball letter
+  getBallLetter(number) {
+    if (number >= 1 && number <= 15) return 'B';
+    if (number >= 16 && number <= 30) return 'I';
+    if (number >= 31 && number <= 45) return 'N';
+    if (number >= 46 && number <= 60) return 'G';
+    if (number >= 61 && number <= 75) return 'O';
+    return '';
   }
 
   async validateBingo(roomId, telegramId, markedNumbers) {
@@ -593,10 +558,10 @@ class GameService {
     }
 
     // Verify all marked numbers were actually called
-    const invalidNumbers = markedNumbers.filter(num => 
+    const invalidNumbers = markedNumbers.filter(num =>
       num !== 0 && !game.calledNumbers.includes(num)
     );
-    
+
     if (invalidNumbers.length > 0) {
       throw new Error(`Invalid numbers marked: ${invalidNumbers.join(', ')}`);
     }
@@ -607,13 +572,12 @@ class GameService {
       // Provide more detailed error message
       const markedSet = new Set([...markedNumbers, 0]);
       let errorDetails = [];
-      
+
       // Check what patterns were attempted
       const rows = [];
       const cols = [];
       const diagonals = [0, 0];
-      const corners = [];
-      
+
       // Check rows
       for (let row = 0; row < 5; row++) {
         let count = 0;
@@ -622,84 +586,31 @@ class GameService {
         }
         rows.push(count);
       }
-      
+
       // Check columns
       for (let col = 0; col < 5; col++) {
-        if (marked.has(card[col][row])) count++;
+        let count = 0;
+        for (let row = 0; row < 5; row++) {
+          if (markedSet.has(player.card[col][row])) count++;
+        }
+        cols.push(count);
       }
-      rowProgress = Math.max(rowProgress, count);
-    }
-    
-    // Check columns
-    for (let col = 0; col < 5; col++) {
-      let count = 0;
-      for (let row = 0; row < 5; row++) {
-        if (marked.has(card[col][row])) count++;
-      }
-      colProgress = Math.max(colProgress, count);
-    }
-    
-    // Check diagonals
-    let diagonal1 = 0, diagonal2 = 0;
-    for (let i = 0; i < 5; i++) {
-      if (marked.has(card[i][i])) diagonal1++;
-      if (marked.has(card[i][4-i])) diagonal2++;
-    }
-    diagProgress = Math.max(diagonal1, diagonal2);
-    
-    // Check corners
-    const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
-    cornerProgress = corners.filter(corner => marked.has(corner)).length;
-    
-    return {
-      row: rowProgress,
-      column: colProgress,
-      diagonal: diagProgress,
-      corners: cornerProgress,
-      total: Math.max(rowProgress, colProgress, diagProgress, cornerProgress),
-      markedCount: markedNumbers.length
-    };
-  }
 
-  // Fallback random winner selection
-  selectRandomWinners(players, count = 1) {
-    const availablePlayers = players.filter(p => !p.hasWon);
-    const winners = [];
-    
-    for (let i = 0; i < Math.min(count, availablePlayers.length); i++) {
-      const randomIndex = Math.floor(Math.random() * availablePlayers.length);
-      winners.push(availablePlayers.splice(randomIndex, 1)[0]);
-    }
-    
-    return winners;
-  }
-
-  // Helper method to get ball letter
-  getBallLetter(number) {
-    if (number >= 1 && number <= 15) return 'B';
-    if (number >= 16 && number <= 30) return 'I';
-    if (number >= 31 && number <= 45) return 'N';
-    if (number >= 46 && number <= 60) return 'G';
-    if (number >= 61 && number <= 75) return 'O';
-    return '';
-  }
-
-      
       // Check diagonals
       for (let i = 0; i < 5; i++) {
         if (markedSet.has(player.card[i][i])) diagonals[0]++;
-        if (markedSet.has(player.card[i][4-i])) diagonals[1]++;
+        if (markedSet.has(player.card[i][4 - i])) diagonals[1]++;
       }
-      
+
       // Check corners
       const cornerNumbers = [player.card[0][0], player.card[4][0], player.card[0][4], player.card[4][4]];
       const markedCorners = cornerNumbers.filter(corner => markedSet.has(corner)).length;
-      
+
       errorDetails.push(`Rows: ${rows.join(',')}`);
       errorDetails.push(`Columns: ${cols.join(',')}`);
       errorDetails.push(`Diagonals: ${diagonals.join(',')}`);
       errorDetails.push(`Corners: ${markedCorners}/4`);
-      
+
       throw new Error(`No valid bingo pattern found. You need 5 in a row, column, diagonal, or 4 corners. Current: ${errorDetails.join(' | ')}`);
     }
 
@@ -736,6 +647,7 @@ class GameService {
       player.markedNumbers.push(number);
       await game.save();
     }
+
     return game;
   }
 
@@ -751,7 +663,7 @@ class GameService {
 
     if (winners.length > 0) {
       const prizePerWinner = Math.floor((totalPot * 0.8) / winners.length);
-      
+
       winnerData = {
         winners: winners.map(winner => ({
           userId: winner.userId,
@@ -782,7 +694,7 @@ class GameService {
     for (let i = 0; i < game.players.length; i++) {
       const player = game.players[i];
       const isWinner = winners.some(w => w.telegramId === player.telegramId);
-      
+
       const result = new GameResult({
         gameId: game._id,
         userId: player.userId,
@@ -794,6 +706,7 @@ class GameService {
         numbersCalledCount: game.calledNumbers.length,
         gameDate: game.finishedAt
       });
+
       await result.save();
 
       // Update player stats
@@ -803,8 +716,8 @@ class GameService {
     }
 
     // Notify all players
-    const message = winners.length > 0 
-      ? winners.length === 1 
+    const message = winners.length > 0
+      ? winners.length === 1
         ? `🎉 ${winners[0].firstName} wins ${Math.floor((totalPot * 0.8))} Birr!`
         : `🎉 ${winners.length} winners! Each wins ${Math.floor((totalPot * 0.8) / winners.length)} Birr!`
       : 'Game ended - no winner';
@@ -830,7 +743,7 @@ class GameService {
 
   checkBingoPattern(card, markedNumbers) {
     const marked = new Set([...markedNumbers, 0]); // Include FREE space
-    
+
     // Check rows
     for (let row = 0; row < 5; row++) {
       let count = 0;
@@ -839,7 +752,7 @@ class GameService {
       }
       if (count === 5) return true;
     }
-    
+
     // Check columns
     for (let col = 0; col < 5; col++) {
       let count = 0;
@@ -848,28 +761,28 @@ class GameService {
       }
       if (count === 5) return true;
     }
-    
+
     // Check diagonals
     let diagonal1 = 0, diagonal2 = 0;
     for (let i = 0; i < 5; i++) {
       if (marked.has(card[i][i])) diagonal1++;
-      if (marked.has(card[i][4-i])) diagonal2++;
+      if (marked.has(card[i][4 - i])) diagonal2++;
     }
     if (diagonal1 === 5 || diagonal2 === 5) return true;
-    
+
     // Check four corners
     const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
     const markedCorners = corners.filter(corner => marked.has(corner)).length;
     if (markedCorners === 4) return true;
-    
+
     return false;
   }
 
   async getAvailableGames() {
-    const games = await Game.find({ 
+    const games = await Game.find({
       status: { $in: ['waiting', 'playing'] }
     }).sort({ createdAt: -1 });
-    
+
     return games;
   }
 
@@ -879,10 +792,10 @@ class GameService {
   }
 
   async getGamesByMoneyLevel() {
-    const games = await Game.find({ 
+    const games = await Game.find({
       status: { $in: ['waiting', 'playing'] }
     }).sort({ createdAt: -1 });
-    
+
     const gamesByLevel = {};
     games.forEach(game => {
       if (!gamesByLevel[game.moneyLevel]) {
@@ -890,13 +803,13 @@ class GameService {
       }
       gamesByLevel[game.moneyLevel].push(game);
     });
-    
+
     return gamesByLevel;
   }
 
   async getLeaderboard(period = 'all') {
     let dateFilter = {};
-    
+
     if (period === 'daily') {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -929,7 +842,7 @@ class GameService {
     const results = await GameResult.find({ telegramId })
       .sort({ gameDate: -1 })
       .limit(20);
-    
+
     return results;
   }
 }
