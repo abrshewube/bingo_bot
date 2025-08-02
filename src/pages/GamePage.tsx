@@ -48,6 +48,8 @@ const GamePage: React.FC = () => {
   const [takenCartelas, setTakenCartelas] = useState<number[]>([]);
   const [joinCountdown, setJoinCountdown] = useState<number | null>(null);
   
+  const [gameMessage, setGameMessage] = useState<string | null>(null);
+
   // Get money level from location state or default
   const moneyLevel = location.state?.moneyLevel || 10;
 
@@ -106,6 +108,7 @@ const GamePage: React.FC = () => {
       socket.on('bingoValidated', handleBingoValidated);
       socket.on('bingoRejected', handleBingoRejected);
       socket.on('gameEnded', handleGameEnded);
+      socket.on('gameMessage', handleGameMessage);
       socket.on('error', handleError);
 
       return () => {
@@ -121,6 +124,7 @@ const GamePage: React.FC = () => {
         socket.off('bingoValidated');
         socket.off('bingoRejected');
         socket.off('gameEnded');
+        socket.off('gameMessage');
         socket.off('error');
       };
     }
@@ -202,15 +206,21 @@ const GamePage: React.FC = () => {
   };
 
   const handleBackToHome = () => {
-    if (gameData?.status === 'playing') {
+    if (gameData?.status === 'playing' || (gameData?.status === 'waiting' && !showCartelaSelector)) {
       setShowExitModal(true);
     } else {
-      navigate('/');
+      // If in cartela selection, go back to home
+      // If in waiting room, go back to cartela selection
+      if (showCartelaSelector) {
+        navigate('/');
+      } else {
+        setShowCartelaSelector(true);
+      }
     }
   };
 
   const handleExitConfirm = () => {
-    if (socket && roomId && gameData?.status !== 'playing') {
+    if (socket && roomId && gameData?.status === 'waiting' && !showCartelaSelector) {
       socket.emit('leaveGame', { roomId });
     }
     navigate('/');
@@ -361,19 +371,20 @@ const GamePage: React.FC = () => {
   };
 
   const handleNumberCalled = (data: any) => {
-    console.log('Number called:', data.number);
+    console.log('Number called:', data);
     setCurrentBallNumber(data.number);
     setIsAnimating(true);
     
     // Update called numbers immediately
     setGameData(prev => prev ? {
       ...prev,
-      calledNumbers: [...prev.calledNumbers, data.number].filter((n, i, arr) => arr.indexOf(n) === i)
+      calledNumbers: [...prev.calledNumbers, data.number].filter((n, i, arr) => arr.indexOf(n) === i),
+      gameProgress: data.gameProgress || 0
     } : null);
     
     // Play number announcement (text-to-speech)
     if ('speechSynthesis' in window) {
-      const letter = getBallLetter(data.number);
+      const letter = data.letter || getBallLetter(data.number);
       const utterance = new SpeechSynthesisUtterance(`${letter} ${data.number}`);
       utterance.rate = 0.8;
       utterance.pitch = 1.2;
@@ -446,6 +457,14 @@ const GamePage: React.FC = () => {
       }
       navigate('/');
     }, 5000);
+  };
+
+  const handleGameMessage = (data: any) => {
+    setGameMessage(data.message);
+    // Clear message after 3 seconds
+    setTimeout(() => {
+      setGameMessage(null);
+    }, 3000);
   };
 
   const handleError = (error: any) => {
@@ -626,9 +645,19 @@ const GamePage: React.FC = () => {
             isAnimating={isAnimating}
             onAnimationComplete={handleBallAnimationComplete}
           />
-          <p className="text-white/80 text-sm mt-2">
-            Numbers Called: {gameData.calledNumbers.length}
-          </p>
+          <div className="mt-4 space-y-2">
+            <p className="text-white/80 text-sm">
+              Numbers Called: {gameData.calledNumbers.length}/75
+            </p>
+            {gameData.gameProgress && (
+              <div className="w-full bg-white/20 rounded-full h-2">
+                <div 
+                  className="bg-gradient-to-r from-yellow-400 to-orange-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${gameData.gameProgress}%` }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -659,6 +688,14 @@ const GamePage: React.FC = () => {
 
       {/* Game Instructions for Playing */}
       {gameData.status === 'playing' && (
+        <>
+          {/* Game Message */}
+          {gameMessage && (
+            <div className="glass-card p-4 rounded-xl text-center border-2 border-yellow-400 animate-pulse">
+              <p className="text-yellow-400 font-bold text-lg">{gameMessage}</p>
+            </div>
+          )}
+          
         <div className="glass-card p-4 rounded-xl">
           <h3 className="text-lg font-bold text-white mb-2">🎯 How to Play</h3>
           <div className="text-white/80 text-sm space-y-1">
@@ -669,15 +706,18 @@ const GamePage: React.FC = () => {
             <p>• The system will validate your claim and award prizes if correct</p>
           </div>
         </div>
+        </>
       )}
 
       {/* Called Numbers History */}
       {gameData.calledNumbers && gameData.calledNumbers.length > 0 && (
         <div className="glass-card p-4 rounded-xl">
-          <h3 className="text-lg font-bold text-white mb-3">📋 Called Numbers History ({gameData.calledNumbers.length})</h3>
+          <h3 className="text-lg font-bold text-white mb-3">
+            📋 Called Numbers ({gameData.calledNumbers.length}/75)
+          </h3>
           <div className="max-h-48 overflow-y-auto">
-            <div className="grid grid-cols-8 gap-2">
-              {gameData.calledNumbers.map((number) => {
+            <div className="grid grid-cols-10 gap-1">
+              {gameData.calledNumbers.slice().reverse().map((number, index) => {
                 const letter = getBallLetter(number);
                 const getBallColor = (num: number) => {
                   if (num >= 1 && num <= 15) return 'bg-red-500';
@@ -690,21 +730,25 @@ const GamePage: React.FC = () => {
                 
                 return (
                   <div
-                    key={number}
-                    className={`w-12 h-12 text-white rounded-full flex flex-col items-center justify-center text-xs font-bold ${getBallColor(number)}`}
+                    key={`${number}-${index}`}
+                    className={`w-10 h-10 text-white rounded-full flex flex-col items-center justify-center text-xs font-bold ${getBallColor(number)} ${
+                      index === 0 ? 'ring-2 ring-white animate-pulse' : ''
+                    }`}
                   >
-                    <div className="text-xs">{letter}</div>
-                    <div className="text-sm">{number}</div>
+                    <div className="text-xs leading-none">{letter}</div>
+                    <div className="text-xs leading-none font-bold">{number}</div>
                   </div>
                 );
               })}
             </div>
           </div>
-          <div className="mt-3 text-center">
-            <p className="text-white/60 text-sm">
-              Scroll to see all called numbers with B/I/N/G/O prefixes.
-            </p>
-          </div>
+          {gameData.calledNumbers.length > 0 && (
+            <div className="mt-3 text-center">
+              <p className="text-white/60 text-sm">
+                Latest numbers shown first • {gameData.calledNumbers.length} total called
+              </p>
+            </div>
+          )}
         </div>
       )}
 

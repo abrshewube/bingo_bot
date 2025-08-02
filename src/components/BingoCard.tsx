@@ -34,7 +34,7 @@ const BingoCard: React.FC<BingoCardProps> = ({
 
   // Check for current called number and add glow effect only for that number
   useEffect(() => {
-    if (currentNumber && !isMarked(currentNumber) && !isFree(currentNumber)) {
+    if (currentNumber && !isFree(currentNumber)) {
       // Check if current number is on the card
       for (let col = 0; col < 5; col++) {
         for (let row = 0; row < 5; row++) {
@@ -42,10 +42,10 @@ const BingoCard: React.FC<BingoCardProps> = ({
           if (number === currentNumber) {
             setGlowingNumbers(new Set([currentNumber]));
             
-            // Remove glow after 1 second
+            // Remove glow after 2 seconds
             setTimeout(() => {
               setGlowingNumbers(new Set());
-            }, 1000);
+            }, 2000);
             return;
           }
         }
@@ -88,11 +88,14 @@ const BingoCard: React.FC<BingoCardProps> = ({
                 } ${
                   clickable ? 'cursor-pointer hover:scale-110' : ''
                 } ${
-                  glowing ? 'ring-2 ring-green-400 ring-opacity-75 animate-pulse' : ''
+                  glowing ? 'ring-4 ring-yellow-400 ring-opacity-75 animate-pulse shadow-lg shadow-yellow-400/50' : ''
                 }`}
                 onClick={() => clickable && onNumberClick && onNumberClick(number)}
               >
                 {free ? 'FREE' : number}
+                {glowing && !free && (
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full animate-ping"></div>
+                )}
               </div>
             );
           })

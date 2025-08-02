@@ -73,7 +73,7 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
 
   const handleCartelaClick = (cartelaNumber: number) => {
     // Don't allow selecting already taken cartelas (except if it's the current user's cartela)
-    if (isCartelaTaken[cartelaNumber] && cartelaNumber !== currentUserCartela) {
+    if (isCartelaTaken[cartelaNumber] && cartelaNumber !== selectedCartela) {
       return;
     }
     
@@ -82,7 +82,15 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
     setPreviewCard(newCard);
     onCartelaSelect(cartelaNumber, newCard);
     
-    // Don't emit selectCartela event - cartela will be reserved when user joins
+    // Emit selectCartela event to update server about the selection
+    if (socket && roomId) {
+      socket.emit('selectCartela', { 
+        roomId, 
+        cartelaNumber, 
+        card: newCard,
+        previousCartela: selectedCartela // Send previous cartela to free it up
+      });
+    }
   };
 
   // Removed regenerate functionality as requested

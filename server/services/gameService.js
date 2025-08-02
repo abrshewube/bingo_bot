@@ -213,7 +213,7 @@ class GameService {
     }
 
     // Remove player and refund entry fee
-    const player = game.players[playerIndex];
+      const { roomId, cartelaNumber, card, previousCartela } = data;
     game.players.splice(playerIndex, 1);
     
     // Remove cartela number from taken list if it was set
@@ -229,21 +229,37 @@ class GameService {
     });
 
     // If no players left, delete the game
-    if (game.players.length === 0) {
-      await Game.findByIdAndDelete(game._id);
-    } else {
-      // Notify remaining players
-      this.io.to(roomId).emit('playerLeft', {
-        roomId: roomId,
-        playerCount: game.players.length,
+      // Free up previous cartela if user had one
+      if (previousCartela && game.takenCartelas.includes(previousCartela)) {
+        const existingPlayer = game.players.find(p => p.telegramId === socket.telegramId);
+        if (existingPlayer && existingPlayer.cartelaNumber === previousCartela) {
+          game.takenCartelas = game.takenCartelas.filter(num => num !== previousCartela);
+        }
+      }
+
+      // Check if new cartela is already taken by someone else
+      if (game.takenCartelas.includes(cartelaNumber)) {
+        socket.emit('error', { message: `Cartela number ${cartelaNumber} is already taken` });
+        return;
         minPlayers: game.minPlayers,
         maxPlayers: game.maxPlayers,
-        totalPot: game.moneyLevel * game.players.length,
-        players: game.players.map(p => ({
+      // Add new cartela to taken list temporarily
+      game.takenCartelas.push(cartelaNumber);
+      await game.save();
+
+      // Notify all players about cartela selection
+      socket.to(roomId).emit('cartelaSelected', {
+        roomId: roomId,
+        cartelaNumber: cartelaNumber,
+        takenCartelas: game.takenCartelas,
+        playerName: socket.firstName
+      });
+      
           telegramId: p.telegramId,
           firstName: p.firstName
         })),
-        takenCartelas: game.takenCartelas
+        takenCartelas: game.takenCartelas,
+        message: `Cartela ${cartelaNumber} selected successfully`
       });
     }
 
@@ -333,11 +349,12 @@ class GameService {
   }
 
   startNumberCalling(roomId) {
-    const maxNumbers = 75; // All numbers
-    const maxGameTime = 10 * 60 * 1000; // 10 minutes for slower calling
+    const maxNumbers = 50; // Reduced for better game experience
+    const maxGameTime = 8 * 60 * 1000; // 8 minutes max
     let numbersCalled = 0;
     const calledNumbers = [];
     const startTime = Date.now();
+    let potentialWinners = [];
 
     const interval = setInterval(async () => {
       try {
@@ -348,12 +365,143 @@ class GameService {
           return;
         }
 
-        // Check if game time has elapsed
-        if (Date.now() - startTime >= maxGameTime) {
+        // Check for winners every few numbers after 20 numbers called
+        if (numbersCalled >= 20 && numbersCalled % 3 === 0) {
+          potentialWinners = [];
+          for (const player of game.players) {
+            if (!player.hasWon) {
+              const hasBingo = this.checkBingoPattern(player.card, player.markedNumbers);
+              if (hasBingo) {
+                player.hasWon = true;
+                potentialWinners.push(player);
+              }
+            }
+          }
+          
+          // If we have winners, end the game
+          if (potentialWinners.length > 0) {
+            await this.endGame(roomId, potentialWinners);
+            clearInterval(interval);
+            this.numberCallingIntervals.delete(roomId);
+            return;
+          }
+        }
+
+        // Smart ending: ensure at least one winner
+        const shouldEndGame = Date.now() - startTime >= maxGameTime || 
+                             numbersCalled >= maxNumbers ||
+                             (numbersCalled >= 35 && Math.random() < 0.3); // 30% chance after 35 numbers
+
+        if (shouldEndGame) {
           console.log(`Game time elapsed for room ${roomId}, checking for winners...`);
           
-          // Check all players for bingo patterns
-          const winners = [];
+          // Smart winner selection - ensure at least 1-2 winners
+          const winners = this.selectSmartWinners(game.players);
+          
+          if (winners.length > 0) {
+            // Mark winners
+            for (const winner of winners) {
+              const player = game.players.find(p => p.telegramId === winner.telegramId);
+              if (player) player.hasWon = true;
+            }
+            await this.endGame(roomId, winners);
+          } else {
+            // Fallback: pick random winner(s)
+            const randomWinners = this.selectRandomWinners(game.players, 1);
+            await this.endGame(roomId, randomWinners);
+          }
+          
+          clearInterval(interval);
+          this.numberCallingIntervals.delete(roomId);
+          return;
+        }
+
+        // Generate a random number that hasn't been called yet
+        let number;
+        do {
+          number = Math.floor(Math.random() * 75) + 1;
+        } while (calledNumbers.includes(number));
+
+        calledNumbers.push(number);
+        numbersCalled++;
+
+        // Update game with new called number
+        game.calledNumbers.push(number);
+        game.currentNumber = number;
+        await game.save();
+
+        // Emit to all players in the room with enhanced data
+        this.io.to(roomId).emit('numberCalled', { 
+          number,
+          letter: this.getBallLetter(number),
+          totalCalled: numbersCalled,
+          gameProgress: Math.min((numbersCalled / 40) * 100, 100) // Progress indicator
+        });
+
+        // Send encouragement messages
+        if (numbersCalled === 15) {
+          this.io.to(roomId).emit('gameMessage', { 
+            message: '🔥 Game heating up! Keep marking your numbers!' 
+          });
+        } else if (numbersCalled === 30) {
+          this.io.to(roomId).emit('gameMessage', { 
+            message: '⚡ Getting close! Someone might win soon!' 
+          });
+        }
+
+      } catch (error) {
+        console.error(`Error in number calling for room ${roomId}:`, error);
+        clearInterval(interval);
+        this.numberCallingIntervals.delete(roomId);
+      }
+    }, 4000); // Call numbers every 4 seconds
+
+    this.numberCallingIntervals.set(roomId, interval);
+  }
+
+  // Smart winner selection algorithm
+  selectSmartWinners(players) {
+    const winners = [];
+    const playerProgress = [];
+
+    // Calculate progress for each player
+    for (const player of players) {
+      if (player.hasWon) continue;
+      
+      const progress = this.calculatePlayerProgress(player.card, player.markedNumbers);
+      playerProgress.push({ player, progress });
+    }
+
+    // Sort by progress (highest first)
+    playerProgress.sort((a, b) => b.progress.total - a.progress.total);
+
+    // Select 1-2 winners based on progress and some randomness
+    const topPlayers = playerProgress.slice(0, 3); // Top 3 players
+    
+    if (topPlayers.length > 0) {
+      // Always include the top player
+      winners.push(topPlayers[0].player);
+      
+      // 40% chance to include second winner if there are multiple top players
+      if (topPlayers.length > 1 && Math.random() < 0.4) {
+        winners.push(topPlayers[1].player);
+      }
+    }
+
+    return winners;
+  }
+
+  // Calculate player progress for fair winning
+  calculatePlayerProgress(card, markedNumbers) {
+    const marked = new Set([...markedNumbers, 0]); // Include FREE space
+    let rowProgress = 0;
+    let colProgress = 0;
+    let diagProgress = 0;
+    let cornerProgress = 0;
+    
+    // Check rows
+    for (let row = 0; row < 5; row++) {
+      let count = 0;
           for (const player of game.players) {
             if (!player.hasWon) {
               const hasBingo = this.checkBingoPattern(player.card, player.markedNumbers);
@@ -477,12 +625,65 @@ class GameService {
       
       // Check columns
       for (let col = 0; col < 5; col++) {
-        let count = 0;
-        for (let row = 0; row < 5; row++) {
-          if (markedSet.has(player.card[col][row])) count++;
-        }
-        cols.push(count);
+        if (marked.has(card[col][row])) count++;
       }
+      rowProgress = Math.max(rowProgress, count);
+    }
+    
+    // Check columns
+    for (let col = 0; col < 5; col++) {
+      let count = 0;
+      for (let row = 0; row < 5; row++) {
+        if (marked.has(card[col][row])) count++;
+      }
+      colProgress = Math.max(colProgress, count);
+    }
+    
+    // Check diagonals
+    let diagonal1 = 0, diagonal2 = 0;
+    for (let i = 0; i < 5; i++) {
+      if (marked.has(card[i][i])) diagonal1++;
+      if (marked.has(card[i][4-i])) diagonal2++;
+    }
+    diagProgress = Math.max(diagonal1, diagonal2);
+    
+    // Check corners
+    const corners = [card[0][0], card[4][0], card[0][4], card[4][4]];
+    cornerProgress = corners.filter(corner => marked.has(corner)).length;
+    
+    return {
+      row: rowProgress,
+      column: colProgress,
+      diagonal: diagProgress,
+      corners: cornerProgress,
+      total: Math.max(rowProgress, colProgress, diagProgress, cornerProgress),
+      markedCount: markedNumbers.length
+    };
+  }
+
+  // Fallback random winner selection
+  selectRandomWinners(players, count = 1) {
+    const availablePlayers = players.filter(p => !p.hasWon);
+    const winners = [];
+    
+    for (let i = 0; i < Math.min(count, availablePlayers.length); i++) {
+      const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+      winners.push(availablePlayers.splice(randomIndex, 1)[0]);
+    }
+    
+    return winners;
+  }
+
+  // Helper method to get ball letter
+  getBallLetter(number) {
+    if (number >= 1 && number <= 15) return 'B';
+    if (number >= 16 && number <= 30) return 'I';
+    if (number >= 31 && number <= 45) return 'N';
+    if (number >= 46 && number <= 60) return 'G';
+    if (number >= 61 && number <= 75) return 'O';
+    return '';
+  }
+
       
       // Check diagonals
       for (let i = 0; i < 5; i++) {
