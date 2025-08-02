@@ -7,7 +7,7 @@ import BingoCard from '../components/BingoCard';
 import BallDisplay from '../components/BallDisplay';
 import CartelaSelector from '../components/CartelaSelector';
 import ExitConfirmationModal from '../components/ExitConfirmationModal';
-import { ArrowLeft, Users, Clock, Trophy } from 'lucide-react';
+import { ArrowLeft, Users, Clock, Trophy, Crown, X } from 'lucide-react';
 
 interface GameData {
   roomId: string;
@@ -46,6 +46,7 @@ const GamePage: React.FC = () => {
   const [gameStartTime, setGameStartTime] = useState<Date | null>(null);
   const [gameTimeLeft, setGameTimeLeft] = useState<number | null>(null);
   const [takenCartelas, setTakenCartelas] = useState<number[]>([]);
+  const [cartelaOwners, setCartelaOwners] = useState<{[key: number]: string}>({});
   
   // Get money level from location state or default
   const moneyLevel = location.state?.moneyLevel || 10;
@@ -86,6 +87,7 @@ const GamePage: React.FC = () => {
       socket.on('bingoValidated', handleBingoValidated);
       socket.on('bingoRejected', handleBingoRejected);
       socket.on('gameEnded', handleGameEnded);
+      socket.on('cartelaSelected', handleCartelaSelected);
       socket.on('error', handleError);
 
       return () => {
@@ -99,6 +101,7 @@ const GamePage: React.FC = () => {
         socket.off('bingoValidated');
         socket.off('bingoRejected');
         socket.off('gameEnded');
+        socket.off('cartelaSelected');
         socket.off('error');
       };
     }
@@ -144,6 +147,15 @@ const GamePage: React.FC = () => {
   const handleCartelaSelect = (cartelaNumber: number, card: number[][]) => {
     setSelectedCartela(cartelaNumber);
     setUserCard(card);
+    
+    // Emit cartela selection for real-time updates
+    if (socket && roomId) {
+      socket.emit('selectCartela', {
+        roomId,
+        cartelaNumber,
+        card
+      });
+    }
   };
 
   const handleJoinGameWithCartela = () => {
@@ -236,6 +248,17 @@ const GamePage: React.FC = () => {
       totalPot: data.totalPot
     } : null);
     setTakenCartelas(data.takenCartelas || []);
+    
+    // Update cartela owners from game data
+    if (data.players) {
+      const owners: {[key: number]: string} = {};
+      data.players.forEach((player: any) => {
+        if (player.cartelaNumber) {
+          owners[player.cartelaNumber] = player.firstName;
+        }
+      });
+      setCartelaOwners(owners);
+    }
     
     // If this is the current user joining, hide cartela selector and load their card
     if (data.players.some((p: any) => p.telegramId === user?.telegramId)) {
@@ -363,6 +386,22 @@ const GamePage: React.FC = () => {
     alert(`Bingo rejected: ${data.reason}`);
   };
 
+  const handleCartelaSelected = (data: any) => {
+    console.log('Cartela selected by another player:', data);
+    // Update taken cartelas when another player selects a cartela
+    if (data.takenCartelas) {
+      setTakenCartelas(data.takenCartelas);
+    }
+    
+    // Update cartela owners
+    if (data.telegramId && data.cartelaNumber) {
+      setCartelaOwners(prev => ({
+        ...prev,
+        [data.cartelaNumber]: data.firstName || 'Unknown Player'
+      }));
+    }
+  };
+
   const handleGameEnded = (data: any) => {
     setGameStartTime(null);
     setGameTimeLeft(null);
@@ -436,6 +475,7 @@ const GamePage: React.FC = () => {
         isJoining={isJoining}
         takenCartelas={takenCartelas}
         currentUserCartela={selectedCartela}
+        cartelaOwners={cartelaOwners}
       />
     );
   }
@@ -532,6 +572,60 @@ const GamePage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Cartela Status Display */}
+      {gameData.status === 'waiting' && (
+        <div className="glass-card p-4 rounded-xl">
+          <h3 className="text-lg font-bold text-white mb-3">🎯 Cartela Status</h3>
+          <div className="grid grid-cols-10 gap-1 mb-3">
+            {Array.from({ length: 100 }, (_, i) => i + 1).map((number) => {
+              const isTaken = takenCartelas.includes(number);
+              const isSelected = selectedCartela === number;
+              const owner = cartelaOwners[number];
+              
+              return (
+                <div
+                  key={number}
+                  className={`aspect-square flex items-center justify-center text-xs font-bold rounded border transition-all duration-200 relative ${
+                    isSelected 
+                      ? 'bg-gradient-to-br from-green-500 to-green-600 text-white border-green-400 scale-110 shadow-lg' 
+                      : isTaken 
+                        ? 'bg-gradient-to-br from-red-500/30 to-red-600/30 text-white/60 border-red-500/50' 
+                        : 'bg-gradient-to-br from-gray-500/20 to-gray-600/20 text-white border-gray-400/30'
+                  }`}
+                  title={owner ? `Taken by ${owner}` : isSelected ? 'Your cartela' : 'Available'}
+                >
+                  {isSelected && (
+                    <div className="absolute top-0 right-0 -mt-1 -mr-1 bg-green-500 rounded-full p-0.5">
+                      <Crown size={10} className="text-white" />
+                    </div>
+                  )}
+                  {isTaken && !isSelected && (
+                    <div className="absolute top-0 right-0 -mt-1 -mr-1 bg-red-500 rounded-full p-0.5">
+                      <X size={10} className="text-white" />
+                    </div>
+                  )}
+                  <span className="text-xs">{number}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-center space-x-4 text-xs">
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-green-500 mr-1"></div>
+              <span className="text-white">Your Cartela</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-red-500/50 mr-1"></div>
+              <span className="text-white/70">Taken</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-3 h-3 rounded-full bg-gray-500/30 mr-1"></div>
+              <span className="text-white/70">Available</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Countdown */}
       {countdown && countdown > 0 && (

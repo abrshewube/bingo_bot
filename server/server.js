@@ -155,6 +155,39 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Select cartela (for real-time updates)
+  socket.on('selectCartela', async (data) => {
+    try {
+      const { roomId, cartelaNumber, card } = data;
+      
+      // Check if user is registered
+      const user = await User.findOne({ telegramId: socket.telegramId });
+      if (!user || !user.isRegistered) {
+        socket.emit('error', { message: 'Please complete registration first' });
+        return;
+      }
+
+      // Update cartela selection in real-time
+      await gameService.updateCartelaSelection(roomId, socket.telegramId, cartelaNumber, card);
+      
+              // Notify all players in the room about the cartela selection
+        const game = await gameService.getGameByRoomId(roomId);
+        if (game) {
+          socket.to(roomId).emit('cartelaSelected', {
+            roomId: roomId,
+            telegramId: socket.telegramId,
+            firstName: socket.firstName,
+            cartelaNumber: cartelaNumber,
+            takenCartelas: game.takenCartelas
+          });
+        }
+
+    } catch (error) {
+      console.error('Select cartela error:', error);
+      socket.emit('error', { message: error.message });
+    }
+  });
+
   // Leave game
   socket.on('leaveGame', async (data) => {
     try {

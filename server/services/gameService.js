@@ -673,6 +673,63 @@ class GameService {
     return game;
   }
 
+  async updateCartelaSelection(roomId, telegramId, cartelaNumber, card) {
+    const game = await Game.findOne({ roomId });
+    if (!game) {
+      throw new Error('Game not found');
+    }
+
+    if (game.status === 'playing') {
+      throw new Error('Cannot change cartela after game has started');
+    }
+
+    // Check if cartela number is already taken by someone else
+    if (game.takenCartelas.includes(cartelaNumber)) {
+      const playerWithCartela = game.players.find(p => p.cartelaNumber === cartelaNumber);
+      if (playerWithCartela && playerWithCartela.telegramId !== telegramId) {
+        throw new Error(`Cartela number ${cartelaNumber} is already taken`);
+      }
+    }
+
+    // Find the player
+    const player = game.players.find(p => p.telegramId === telegramId);
+    if (!player) {
+      throw new Error('Player not in this game');
+    }
+
+    // Remove old cartela from taken list if it exists
+    if (player.cartelaNumber) {
+      game.takenCartelas = game.takenCartelas.filter(num => num !== player.cartelaNumber);
+    }
+
+    // Update player's cartela and card
+    player.cartelaNumber = cartelaNumber;
+    player.card = card;
+
+    // Add new cartela to taken list
+    if (!game.takenCartelas.includes(cartelaNumber)) {
+      game.takenCartelas.push(cartelaNumber);
+    }
+
+    await game.save();
+
+    // Notify all players about the update
+    this.io.to(roomId).emit('playerJoined', {
+      roomId: roomId,
+      playerCount: game.players.length,
+      minPlayers: game.minPlayers,
+      maxPlayers: game.maxPlayers,
+      totalPot: game.moneyLevel * game.players.length,
+      players: game.players.map(p => ({
+        telegramId: p.telegramId,
+        firstName: p.firstName
+      })),
+      takenCartelas: game.takenCartelas
+    });
+
+    return game;
+  }
+
   async getGamesByMoneyLevel() {
     const games = await Game.find({ 
       status: { $in: ['waiting', 'playing'] }
