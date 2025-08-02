@@ -1,5 +1,47 @@
 import React, { useEffect, useState } from 'react';
 
+// Define the custom keyframe animations for the rolling effect.
+// These are included directly in the component for a self-contained example.
+const customStyles = `
+  @keyframes rollIn {
+    0% {
+      transform: translateX(-100vw) rotate(-360deg) scale(0);
+      opacity: 0;
+    }
+    70% {
+      transform: translateX(0) rotate(0deg) scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: translateX(0) rotate(0deg) scale(1);
+    }
+  }
+
+  @keyframes rollOut {
+    0% {
+      transform: translateX(0) rotate(0deg) scale(1);
+      opacity: 1;
+    }
+    30% {
+      transform: translateX(0) rotate(0deg) scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: translateX(100vw) rotate(360deg) scale(0);
+      opacity: 0;
+    }
+  }
+
+  @keyframes bouncePulse {
+    0%, 100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.05);
+    }
+  }
+`;
+
 interface BallDisplayProps {
   currentNumber: number | null;
   isAnimating: boolean;
@@ -13,38 +55,45 @@ const BallDisplay: React.FC<BallDisplayProps> = ({
 }) => {
   const [showBall, setShowBall] = useState(false);
   const [animationPhase, setAnimationPhase] = useState<'enter' | 'display' | 'exit'>('enter');
+  const [displayNumber, setDisplayNumber] = useState<number | null>(null);
 
   useEffect(() => {
-    if (currentNumber && isAnimating) {
+    // Only run this effect if a new ball number is provided
+    if (currentNumber !== null) {
+      // Set the number to display and start the animation sequence
+      setDisplayNumber(currentNumber);
       setShowBall(true);
       setAnimationPhase('enter');
       
-      // Animation sequence
-      const enterTimer = setTimeout(() => {
+      // Timer for the 'display' phase (after the rolling-in animation)
+      const displayTimer = setTimeout(() => {
         setAnimationPhase('display');
-      }, 1000);
+      }, 1000); // Wait for the 'rollIn' animation to finish (1s)
 
+      // Timer for the 'exit' phase
       const exitTimer = setTimeout(() => {
         setAnimationPhase('exit');
-      }, 3000);
+      }, 4000); // Display for 3s before rolling out
 
+      // Timer to hide the ball and reset for the next one
       const hideTimer = setTimeout(() => {
         setShowBall(false);
         setAnimationPhase('enter');
         onAnimationComplete?.();
-      }, 4000);
+      }, 5000); // Wait for the 'rollOut' animation to finish (1s)
 
       return () => {
-        clearTimeout(enterTimer);
+        clearTimeout(displayTimer);
         clearTimeout(exitTimer);
         clearTimeout(hideTimer);
       };
     }
-  }, [currentNumber, isAnimating, onAnimationComplete]);
+  }, [currentNumber, onAnimationComplete]);
 
-  if (!currentNumber || !showBall) {
+  // If no number is being displayed, show the "waiting" state
+  if (!displayNumber || !showBall) {
     return (
-      <div className="flex justify-center items-center min-h-[200px]">
+      <div className="flex justify-center items-center min-h-[200px] p-4">
         <div className="w-40 h-40 rounded-full border-4 border-dashed border-white/30 flex items-center justify-center">
           <span className="text-white/50 text-lg">Waiting for next ball...</span>
         </div>
@@ -52,6 +101,7 @@ const BallDisplay: React.FC<BallDisplayProps> = ({
     );
   }
 
+  // Helper functions to get the letter and color based on the number
   const getBallLetter = (number: number) => {
     if (number >= 1 && number <= 15) return 'B';
     if (number >= 16 && number <= 30) return 'I';
@@ -70,38 +120,43 @@ const BallDisplay: React.FC<BallDisplayProps> = ({
     return 'from-gray-500 to-gray-600';
   };
 
+  // Function to apply the correct animation class based on the phase
   const getAnimationClasses = () => {
     switch (animationPhase) {
       case 'enter':
-        return 'scale-0 rotate-0 opacity-0';
+        return 'animate-[rollIn_1s_ease-out_forwards]';
       case 'display':
-        return 'scale-100 rotate-360 opacity-100 animate-bounce';
+        return 'animate-[bouncePulse_3s_ease-in-out_infinite]';
       case 'exit':
-        return 'scale-80 rotate-720 opacity-0';
+        return 'animate-[rollOut_1s_ease-in_forwards]';
       default:
         return '';
     }
   };
 
   return (
-    <div className="flex justify-center items-center min-h-[200px] relative">
-      <div className={`transition-all duration-500 ease-in-out ${getAnimationClasses()}`}>
-        <div className={`w-40 h-40 rounded-full bg-gradient-to-br ${getBallColor(currentNumber)} shadow-2xl flex items-center justify-center relative`}>
-          {/* Ball highlight */}
-          <div className="absolute top-4 left-8 w-6 h-6 bg-white/30 rounded-full"></div>
-          
-          {/* Ball content */}
-          <div className="text-center z-10">
-            <div className="text-white font-bold text-3xl mb-2">
-              {getBallLetter(currentNumber)}
-            </div>
-            <div className="text-white font-bold text-5xl">
-              {currentNumber}
+    <>
+      {/* Inject custom styles for keyframes */}
+      <style>{customStyles}</style>
+      <div className="flex justify-center items-center min-h-[200px] relative p-4">
+        <div className={`transition-transform duration-1000 ease-in-out ${getAnimationClasses()}`}>
+          <div className={`w-40 h-40 rounded-full bg-gradient-to-br ${getBallColor(displayNumber!)} shadow-2xl flex items-center justify-center relative`}>
+            {/* Ball highlight effect */}
+            <div className="absolute top-4 left-8 w-6 h-6 bg-white/30 rounded-full transform rotate-12"></div>
+            
+            {/* Ball content: Letter and Number */}
+            <div className="text-center z-10">
+              <div className="text-white font-bold text-3xl mb-2">
+                {getBallLetter(displayNumber!)}
+              </div>
+              <div className="text-white font-bold text-5xl">
+                {displayNumber}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
