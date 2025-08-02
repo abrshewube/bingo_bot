@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Play, Check, X } from 'lucide-react';
+import { ArrowLeft, Check, X, Play } from 'lucide-react';
+import { useSocket } from '../contexts/SocketContext';
 
 interface CartelaSelectorProps {
   onCartelaSelect: (cartelaNumber: number, card: number[][]) => void;
@@ -9,6 +10,7 @@ interface CartelaSelectorProps {
   isJoining: boolean;
   takenCartelas?: number[]; // Array of already taken cartela numbers
   currentUserCartela?: number | null; // Current user's selected cartela number
+  roomId?: string; // Room ID for socket communication
 }
 
 const CartelaSelector: React.FC<CartelaSelectorProps> = ({
@@ -18,11 +20,13 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
   moneyLevel,
   isJoining,
   takenCartelas = [],
-  currentUserCartela = null
+  currentUserCartela = null,
+  roomId
 }) => {
   const [selectedCartela, setSelectedCartela] = useState<number | null>(currentUserCartela);
   const [previewCard, setPreviewCard] = useState<number[][] | null>(null);
   const [isCartelaTaken, setIsCartelaTaken] = useState<{[key: number]: boolean}>({});
+  const { socket } = useSocket();
 
   // Initialize taken cartelas
   useEffect(() => {
@@ -77,13 +81,11 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
     setSelectedCartela(cartelaNumber);
     setPreviewCard(newCard);
     onCartelaSelect(cartelaNumber, newCard);
+    
+    // Don't emit selectCartela event - cartela will be reserved when user joins
   };
 
-  const handleRegenerateCard = () => {
-    if (selectedCartela) {
-      handleCartelaClick(selectedCartela);
-    }
-  };
+  // Removed regenerate functionality as requested
 
   const getCartelaStatus = (number: number) => {
     if (selectedCartela === number) return 'selected';
@@ -98,9 +100,9 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
       case 'selected':
         return 'bg-green-500 text-white border-green-400 scale-105 shadow-lg z-10';
       case 'taken':
-        return 'bg-red-500/20 text-white/50 border-red-500/30 cursor-not-allowed';
+        return 'bg-red-500 text-white border-red-400 cursor-not-allowed';
       case 'available':
-        return 'bg-gray-500/20 text-white border-gray-400/30 hover:bg-gray-400/30 hover:scale-105 cursor-pointer';
+        return 'bg-blue-500 text-white border-blue-400 hover:bg-blue-600 hover:scale-105 cursor-pointer';
       default:
         return '';
     }
@@ -127,9 +129,9 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
       <div className="glass-card p-4 rounded-xl">
         <h3 className="text-lg font-bold text-white mb-2">📋 How to Select</h3>
         <div className="text-white/80 text-sm space-y-1">
-          <p>• Choose any cartela number (1-100) to generate your unique bingo card</p>
-          <p>• You can regenerate the same cartela for a different card layout</p>
-          <p>• Once you join the game, you cannot change your cartela</p>
+          <p>• Choose any available cartela number (1-100) to generate your unique bingo card</p>
+          <p>• Click "Join Game" to enter the game room</p>
+          <p>• You can change your cartela before joining the game</p>
         </div>
       </div>
 
@@ -143,11 +145,11 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
               <span>Selected</span>
             </div>
             <div className="flex items-center">
-              <div className="w-3 h-3 rounded-full bg-red-500/20 mr-1"></div>
+              <div className="w-3 h-3 rounded-full bg-red-500 mr-1"></div>
               <span>Taken</span>
             </div>
             <div className="flex items-center">
-              <div className="w-3 h-3 rounded-full bg-gray-500/20 mr-1"></div>
+              <div className="w-3 h-3 rounded-full bg-blue-500 mr-1"></div>
               <span>Available</span>
             </div>
           </div>
@@ -181,14 +183,6 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
             <h3 className="text-lg font-bold text-white">
               Cartela #{selectedCartela} Preview
             </h3>
-            <button
-              onClick={handleRegenerateCard}
-              disabled={isJoining}
-              className="flex items-center space-x-2 bg-white/10 text-white px-3 py-2 rounded-lg hover:bg-white/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw size={16} />
-              <span>Regenerate</span>
-            </button>
           </div>
 
           {/* Mini Bingo Card Preview */}

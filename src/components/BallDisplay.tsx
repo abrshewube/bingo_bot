@@ -45,8 +45,8 @@ const BallDisplay: React.FC<BallDisplayProps> = ({
   if (!currentNumber || !showBall) {
     return (
       <div className="flex justify-center items-center min-h-[200px]">
-        <div className="w-32 h-32 rounded-full border-4 border-dashed border-white/30 flex items-center justify-center">
-          <span className="text-white/50 text-lg">Next Ball</span>
+        <div className="w-40 h-40 rounded-full border-4 border-dashed border-white/30 flex items-center justify-center">
+          <span className="text-white/50 text-lg">Waiting for next ball...</span>
         </div>
       </div>
     );
@@ -86,16 +86,16 @@ const BallDisplay: React.FC<BallDisplayProps> = ({
   return (
     <div className="flex justify-center items-center min-h-[200px] relative">
       <div className={`transition-all duration-500 ease-in-out ${getAnimationClasses()}`}>
-        <div className={`w-32 h-32 rounded-full bg-gradient-to-br ${getBallColor(currentNumber)} shadow-2xl flex items-center justify-center relative animate-spin`}>
+        <div className={`w-40 h-40 rounded-full bg-gradient-to-br ${getBallColor(currentNumber)} shadow-2xl flex items-center justify-center relative`}>
           {/* Ball highlight */}
-          <div className="absolute top-3 left-6 w-5 h-5 bg-white/30 rounded-full"></div>
+          <div className="absolute top-4 left-8 w-6 h-6 bg-white/30 rounded-full"></div>
           
           {/* Ball content */}
           <div className="text-center z-10">
-            <div className="text-white font-bold text-2xl mb-1">
+            <div className="text-white font-bold text-3xl mb-2">
               {getBallLetter(currentNumber)}
             </div>
-            <div className="text-white font-bold text-4xl">
+            <div className="text-white font-bold text-5xl">
               {currentNumber}
             </div>
           </div>

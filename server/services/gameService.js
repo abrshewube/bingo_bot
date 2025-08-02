@@ -136,9 +136,13 @@ class GameService {
       return game;
     }
 
-    // Check if cartela number is already taken (if provided)
+    // Check if cartela number is already taken by someone else (if provided)
     if (cartelaNumber && game.takenCartelas.includes(cartelaNumber)) {
-      throw new Error(`Cartela number ${cartelaNumber} is already taken`);
+      // Check if this cartela belongs to the current user
+      const existingPlayerWithCartela = game.players.find(p => p.cartelaNumber === cartelaNumber);
+      if (!existingPlayerWithCartela || existingPlayerWithCartela.telegramId !== telegramId) {
+        throw new Error(`Cartela number ${cartelaNumber} is already taken`);
+      }
     }
 
     // Deduct entry fee from user's wallet

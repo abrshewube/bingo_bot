@@ -124,6 +124,48 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Select cartela (without joining game yet)
+  socket.on('selectCartela', async (data) => {
+    try {
+      const { roomId, cartelaNumber, card } = data;
+      
+      // Check if user is registered
+      const user = await User.findOne({ telegramId: socket.telegramId });
+      if (!user || !user.isRegistered) {
+        socket.emit('error', { message: 'Please complete registration first' });
+        return;
+      }
+
+      // Check if cartela is already taken by someone else
+      const game = await gameService.getGameByRoomId(roomId);
+      if (!game) {
+        socket.emit('error', { message: 'Game not found' });
+        return;
+      }
+
+      // Check if cartela is already taken by someone else
+      if (game.takenCartelas.includes(cartelaNumber)) {
+        const existingPlayerWithCartela = game.players.find(p => p.cartelaNumber === cartelaNumber);
+        if (!existingPlayerWithCartela || existingPlayerWithCartela.telegramId !== socket.telegramId) {
+          socket.emit('error', { message: `Cartela number ${cartelaNumber} is already taken` });
+          return;
+        }
+      }
+
+      // Don't add to taken list yet - only when they actually join
+      // Just notify that this user is considering this cartela
+      socket.emit('cartelaSelected', {
+        roomId: roomId,
+        cartelaNumber: cartelaNumber,
+        takenCartelas: game.takenCartelas
+      });
+
+    } catch (error) {
+      console.error('Select cartela error:', error);
+      socket.emit('error', { message: error.message });
+    }
+  });
+
   // Join existing game
   socket.on('joinGame', async (data) => {
     try {

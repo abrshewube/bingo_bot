@@ -46,16 +46,17 @@ const GamePage: React.FC = () => {
   const [gameStartTime, setGameStartTime] = useState<Date | null>(null);
   const [gameTimeLeft, setGameTimeLeft] = useState<number | null>(null);
   const [takenCartelas, setTakenCartelas] = useState<number[]>([]);
+  const [joinCountdown, setJoinCountdown] = useState<number | null>(null);
   
   // Get money level from location state or default
   const moneyLevel = location.state?.moneyLevel || 10;
 
   useEffect(() => {
-    if (roomId && !showCartelaSelector) {
+    if (roomId) {
       loadGameData();
       joinRoom();
     }
-  }, [roomId, showCartelaSelector]);
+  }, [roomId]);
 
   // Game timer effect - 10 minutes countdown
   useEffect(() => {
@@ -74,11 +75,30 @@ const GamePage: React.FC = () => {
     }
   }, [gameStartTime, gameData?.status]);
 
+  // Join countdown effect
+  useEffect(() => {
+    if (joinCountdown && joinCountdown > 0) {
+      const interval = setInterval(() => {
+        setJoinCountdown(prev => {
+          if (prev && prev > 1) {
+            return prev - 1;
+          } else {
+            return null;
+          }
+        });
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [joinCountdown]);
+
   useEffect(() => {
     if (socket) {
       socket.on('roomJoined', handleRoomJoined);
+      socket.on('gameJoined', handleGameJoined);
       socket.on('playerJoined', handlePlayerJoined);
       socket.on('playerLeft', handlePlayerLeft);
+      socket.on('cartelaSelected', handleCartelaSelected);
       socket.on('gameCountdown', handleGameCountdown);
       socket.on('gameStarted', handleGameStarted);
       socket.on('numberCalled', handleNumberCalled);
@@ -90,8 +110,10 @@ const GamePage: React.FC = () => {
 
       return () => {
         socket.off('roomJoined');
+        socket.off('gameJoined');
         socket.off('playerJoined');
         socket.off('playerLeft');
+        socket.off('cartelaSelected');
         socket.off('gameCountdown');
         socket.off('gameStarted');
         socket.off('numberCalled');
@@ -144,10 +166,24 @@ const GamePage: React.FC = () => {
   const handleCartelaSelect = (cartelaNumber: number, card: number[][]) => {
     setSelectedCartela(cartelaNumber);
     setUserCard(card);
+    // Don't join automatically - user must click join button
   };
 
   const handleJoinGameWithCartela = () => {
     if (!selectedCartela || !userCard) return;
+    
+    // Check if the selected cartela is already taken by someone else
+    if (takenCartelas.includes(selectedCartela)) {
+      // Check if it's the current user's cartela
+      const isCurrentUserCartela = gameData?.players?.some(p => 
+        p.telegramId === user?.telegramId && p.cartelaNumber === selectedCartela
+      );
+      
+      if (!isCurrentUserCartela) {
+        alert(`Cartela number ${selectedCartela} is already taken by another player. Please select a different cartela.`);
+        return;
+      }
+    }
     
     setIsJoining(true);
     if (socket && roomId) {
@@ -157,6 +193,12 @@ const GamePage: React.FC = () => {
         card: userCard 
       });
     }
+  };
+
+  const handleGameJoined = (data: any) => {
+    console.log('Game joined:', data);
+    setIsJoining(false);
+    setShowCartelaSelector(false);
   };
 
   const handleBackToHome = () => {
@@ -224,6 +266,11 @@ const GamePage: React.FC = () => {
       if (data.gameState.status === 'playing') {
         setShowCartelaSelector(false);
       }
+      
+      // Start join countdown if game is waiting and we have enough players
+      if (data.gameState.status === 'waiting' && data.gameState.playerCount >= data.gameState.minPlayers) {
+        setJoinCountdown(15); // 15 seconds to join
+      }
     }
   };
 
@@ -243,6 +290,11 @@ const GamePage: React.FC = () => {
       // Load user's card data
       loadUserGameData();
     }
+    
+    // Start join countdown if we have enough players and game is waiting
+    if (data.playerCount >= (gameData?.minPlayers || 10) && gameData?.status === 'waiting') {
+      setJoinCountdown(15); // 15 seconds to join
+    }
   };
 
   const handlePlayerLeft = (data: any) => {
@@ -253,6 +305,11 @@ const GamePage: React.FC = () => {
       players: data.players,
       totalPot: data.totalPot
     } : null);
+    setTakenCartelas(data.takenCartelas || []);
+  };
+
+  const handleCartelaSelected = (data: any) => {
+    console.log('Cartela selected:', data);
     setTakenCartelas(data.takenCartelas || []);
   };
 
@@ -271,6 +328,7 @@ const GamePage: React.FC = () => {
       totalPot: data.totalPot
     } : null);
     setCountdown(null);
+    setJoinCountdown(null);
     setShowCartelaSelector(false); // Hide cartela selector when game starts
     
     // Load user's card and marked numbers
@@ -424,9 +482,8 @@ const GamePage: React.FC = () => {
     return '';
   };
 
-  // Show cartela selector first (only if game hasn't started and user hasn't joined yet)
+  // Show cartela selector if game hasn't started and user hasn't joined yet
   if (showCartelaSelector && gameData?.status !== 'playing') {
-    // Always show cartela selector if game hasn't started, regardless of whether user is in game
     return (
       <CartelaSelector
         onCartelaSelect={handleCartelaSelect}
@@ -436,6 +493,7 @@ const GamePage: React.FC = () => {
         isJoining={isJoining}
         takenCartelas={takenCartelas}
         currentUserCartela={selectedCartela}
+        roomId={roomId}
       />
     );
   }
@@ -546,6 +604,19 @@ const GamePage: React.FC = () => {
         </div>
       )}
 
+      {/* Join Countdown */}
+      {joinCountdown && joinCountdown > 0 && (
+        <div className="glass-card p-6 rounded-xl text-center border-2 border-blue-400">
+          <h2 className="text-2xl font-bold text-white mb-2">⏰ Time Left to Join</h2>
+          <div className="text-6xl font-bold text-blue-400 animate-pulse">
+            {joinCountdown.toString().padStart(2, '0')}
+          </div>
+          <p className="text-white/80 mt-2">
+            Game will start automatically when countdown reaches zero
+          </p>
+        </div>
+      )}
+
       {/* Ball Display */}
       {gameData.status === 'playing' && (
         <div className="glass-card p-6 rounded-xl text-center">
@@ -592,7 +663,7 @@ const GamePage: React.FC = () => {
           <h3 className="text-lg font-bold text-white mb-2">🎯 How to Play</h3>
           <div className="text-white/80 text-sm space-y-1">
             <p>• Watch for called numbers and manually mark them on your card</p>
-            <p>• You must remember which numbers were called - they won't be highlighted</p>
+            <p>• Called numbers are displayed with B/I/N/G/O prefixes (e.g., B12, I19, N35)</p>
             <p>• Complete any line (horizontal, vertical, diagonal) or four corners</p>
             <p>• Click "BINGO!" to check if you have a winning pattern</p>
             <p>• The system will validate your claim and award prizes if correct</p>
@@ -605,20 +676,33 @@ const GamePage: React.FC = () => {
         <div className="glass-card p-4 rounded-xl">
           <h3 className="text-lg font-bold text-white mb-3">📋 Called Numbers History ({gameData.calledNumbers.length})</h3>
           <div className="max-h-48 overflow-y-auto">
-            <div className="grid grid-cols-10 gap-2">
-              {gameData.calledNumbers.map((number) => (
-                <div
-                  key={number}
-                  className="w-8 h-8 text-white rounded-full flex items-center justify-center text-sm font-bold bg-blue-500"
-                >
-                  {number}
-                </div>
-              ))}
+            <div className="grid grid-cols-8 gap-2">
+              {gameData.calledNumbers.map((number) => {
+                const letter = getBallLetter(number);
+                const getBallColor = (num: number) => {
+                  if (num >= 1 && num <= 15) return 'bg-red-500';
+                  if (num >= 16 && num <= 30) return 'bg-blue-500';
+                  if (num >= 31 && num <= 45) return 'bg-green-500';
+                  if (num >= 46 && num <= 60) return 'bg-yellow-500';
+                  if (num >= 61 && num <= 75) return 'bg-purple-500';
+                  return 'bg-gray-500';
+                };
+                
+                return (
+                  <div
+                    key={number}
+                    className={`w-12 h-12 text-white rounded-full flex flex-col items-center justify-center text-xs font-bold ${getBallColor(number)}`}
+                  >
+                    <div className="text-xs">{letter}</div>
+                    <div className="text-sm">{number}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="mt-3 text-center">
             <p className="text-white/60 text-sm">
-              Scroll to see all called numbers.
+              Scroll to see all called numbers with B/I/N/G/O prefixes.
             </p>
           </div>
         </div>
