@@ -8,9 +8,10 @@ interface CartelaSelectorProps {
   onBack: () => void;
   moneyLevel: number;
   isJoining: boolean;
-  takenCartelas?: number[]; // Array of already taken cartela numbers
-  currentUserCartela?: number | null; // Current user's selected cartela number
-  roomId?: string; // Room ID for socket communication
+  takenCartelas: number[];
+  currentUserCartela: number | null;
+  roomId?: string;
+  isSelectionEnabled?: boolean;
 }
 
 const CartelaSelector: React.FC<CartelaSelectorProps> = ({
@@ -19,9 +20,10 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
   onBack,
   moneyLevel,
   isJoining,
-  takenCartelas = [],
-  currentUserCartela = null,
-  roomId
+  takenCartelas,
+  currentUserCartela,
+  roomId,
+  isSelectionEnabled = true
 }) => {
   const [selectedCartela, setSelectedCartela] = useState<number | null>(currentUserCartela);
   const [previewCard, setPreviewCard] = useState<number[][] | null>(null);
@@ -72,7 +74,7 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
   };
 
   const handleCartelaClick = (cartelaNumber: number) => {
-    // Don't allow selecting already taken cartelas (except if it's the current user's cartela)
+    if (!isSelectionEnabled) return;
     if (isCartelaTaken[cartelaNumber] && cartelaNumber !== currentUserCartela) {
       return;
     }
@@ -81,11 +83,15 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
     setSelectedCartela(cartelaNumber);
     setPreviewCard(newCard);
     onCartelaSelect(cartelaNumber, newCard);
-    
-    // Don't emit selectCartela event - cartela will be reserved when user joins
-  };
 
-  // Removed regenerate functionality as requested
+    // Emit selectCartela event to backend to free previous cartela and reserve new one
+    if (socket && roomId) {
+      socket.emit('selectCartela', {
+        roomId,
+        cartelaNumber,
+      });
+    }
+  };
 
   const getCartelaStatus = (number: number) => {
     if (selectedCartela === number) return 'selected';
@@ -159,10 +165,10 @@ const CartelaSelector: React.FC<CartelaSelectorProps> = ({
             <button
               key={number}
               onClick={() => handleCartelaClick(number)}
-              disabled={isJoining || (isCartelaTaken[number] && number !== currentUserCartela)}
+              disabled={isJoining || (isCartelaTaken[number] && number !== currentUserCartela) || !isSelectionEnabled}
               className={`aspect-square flex items-center justify-center text-sm font-bold rounded-lg border-2 transition-all duration-200 relative ${
                 getCartelaStyles(number)
-              } ${isJoining ? 'opacity-50' : ''}`}
+              } ${isJoining ? 'opacity-50' : ''} ${!isSelectionEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {selectedCartela === number && (
                 <Check className="absolute top-0 right-0 -mt-1 -mr-1 bg-green-500 rounded-full p-0.5" size={16} />
