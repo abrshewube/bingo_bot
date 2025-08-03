@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL =import.meta.env.VITE_API_URL || "https://0f937dfb7c1d.ngrok-free.app" ;
+const API_URL =import.meta.env.VITE_API_URL || "https://bingo-bot-txsn.onrender.com" ;
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,

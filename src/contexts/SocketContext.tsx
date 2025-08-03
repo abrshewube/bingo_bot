@@ -29,7 +29,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   useEffect(() => {
     if (token) {
       console.log('Attempting to connect to socket server...');
-      const newSocket = io('https://0f937dfb7c1d.ngrok-free.app', {
+      const newSocket = io('https://bingo-bot-txsn.onrender.com', {
         auth: {
           token
         }
